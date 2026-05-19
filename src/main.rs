@@ -1,13 +1,17 @@
+mod config;
+mod assets;
+
 use axum::{
     routing::get,
     Router,
     Json,
-    response::IntoResponse,
-    http::StatusCode,
+    response::{IntoResponse, Response},
+    http::{StatusCode, header, Uri},
 };
+use config::Config;
+use assets::Assets;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -28,17 +32,26 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    // 加载配置
+    let config = Config::load();
+    config.ensure_dirs();
+    tracing::info!("Configuration loaded");
+    tracing::info!("Data path: {:?}", config.data_path);
+    tracing::info!("Log path: {:?}", config.log_path);
+    tracing::info!("Repos path: {:?}", config.repos_path);
+
     // 构建应用路由
     let app = Router::new()
-        // API 路由
         .route("/api/health", get(health_check))
         .route("/api/info", get(get_info))
-        // 静态文件服务（Vue 构建输出）
-        .nest_service("/", ServeDir::new("target/dist"))
+        .fallback(static_handler)
         .layer(TraceLayer::new_for_http());
 
     // 服务器地址
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
+    let addr = SocketAddr::from((
+        config.server_addr.parse::<std::net::IpAddr>().unwrap_or([127, 0, 0, 1].into()),
+        config.server_port,
+    ));
 
     // 启动服务器
     let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -50,7 +63,7 @@ async fn main() {
         }
         Err(e) => {
             tracing::error!("Failed to bind to {}: {}", addr, e);
-            tracing::error!("Port 8080 may already be in use. Please stop the other service or change the port.");
+            tracing::error!("Port may already be in use. Please check the configuration.");
             std::process::exit(1);
         }
     };
@@ -58,12 +71,36 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-// 健康检查端点
+async fn static_handler(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    match Assets::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            (
+                [(header::CONTENT_TYPE, mime.as_ref())],
+                content.data,
+            ).into_response()
+        }
+        None => {
+            // SPA fallback: 如果文件不存在，返回 index.html
+            if let Some(index) = Assets::get("index.html") {
+                (
+                    [(header::CONTENT_TYPE, "text/html")],
+                    index.data,
+                ).into_response()
+            } else {
+                (StatusCode::NOT_FOUND, "Not Found").into_response()
+            }
+        }
+    }
+}
+
 async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
 
-// 获取服务信息
 async fn get_info() -> impl IntoResponse {
     let response = ApiResponse {
         message: "GitClub - Git Hosting Server".to_string(),
