@@ -11,31 +11,60 @@
     </header>
 
     <div class="breadcrumb" v-if="selectedNode">
-      <span class="breadcrumb-item" v-for="(part, index) in getBreadcrumbs()" :key="index">
+      <span class="breadcrumb-item" v-for="(crumb, index) in getBreadcrumbs()" :key="index">
         <span v-if="index > 0" class="breadcrumb-separator">/</span>
-        <a href="#" class="breadcrumb-link">{{ part }}</a>
+        <a
+          href="#"
+          class="breadcrumb-link"
+          @click.prevent="handleBreadcrumbClick(crumb, index)"
+        >
+          {{ crumb.name }}
+        </a>
       </span>
     </div>
 
     <div class="main-container">
       <aside class="sidebar">
-        <div class="sidebar-header">
-          <h2>Groups & Repositories</h2>
-          <button class="btn-new" @click="showCreateModal = true">New</button>
+        <div v-if="viewMode === 'tree'">
+          <div class="sidebar-header">
+            <h2>Groups & Repositories</h2>
+            <button class="btn-new" @click="showCreateModal = true">New</button>
+          </div>
+          <div class="tree-container">
+            <TreeNode
+              v-for="node in tree"
+              :key="node.path"
+              :node="node"
+              :selected-path="selectedPath"
+              :expanded-paths="expandedPaths"
+              @select="selectNode"
+              @toggle="toggleNodeExpand"
+            />
+          </div>
         </div>
-        <div class="tree-container">
-          <TreeNode
-            v-for="node in tree"
-            :key="node.path"
-            :node="node"
-            :selected-path="selectedPath"
-            @select="selectNode"
+
+        <div v-else-if="viewMode === 'file-browser'" class="file-browser-container">
+          <FileBrowser
+            :repo-path="currentRepoPath"
+            :current-path="currentFilePath"
+            :branch="currentBranch"
+            :expanded-file-paths="expandedFilePaths"
+            @navigate="navigateToPath"
+            @back="returnToTree"
+            @toggle="toggleFilePathExpand"
           />
         </div>
       </aside>
 
       <main class="content">
-        <RepoDetail v-if="selectedNode && selectedNode.is_repo" :repo-path="selectedNode.path" />
+        <RepoDetail
+          v-if="selectedNode && selectedNode.is_repo"
+          :repo-path="selectedNode.path"
+          :current-path="currentFilePath"
+          :branch="currentBranch"
+          @navigate="handleNavigate"
+          @file-selected="handleFileSelected"
+        />
 
         <div v-else-if="selectedNode && !selectedNode.is_repo" class="detail-panel">
           <div class="detail-header">
@@ -87,11 +116,18 @@ import { ref, onMounted } from 'vue'
 import TreeNode from './components/TreeNode.vue'
 import CreateModal from './components/CreateModal.vue'
 import RepoDetail from './components/RepoDetail.vue'
+import FileBrowser from './components/FileBrowser.vue'
 
 const tree = ref([])
 const selectedPath = ref('')
 const selectedNode = ref(null)
 const showCreateModal = ref(false)
+const viewMode = ref('tree')
+const currentRepoPath = ref('')
+const currentFilePath = ref('')
+const currentBranch = ref('')
+const expandedPaths = ref(new Set())
+const expandedFilePaths = ref(new Set())
 
 const loadTree = async () => {
   try {
@@ -105,6 +141,65 @@ const loadTree = async () => {
 const selectNode = (node) => {
   selectedPath.value = node.path
   selectedNode.value = node
+
+  if (!node.is_repo) {
+    viewMode.value = 'tree'
+    currentFilePath.value = ''
+  }
+}
+
+const toggleNodeExpand = (path) => {
+  if (expandedPaths.value.has(path)) {
+    expandedPaths.value.delete(path)
+  } else {
+    expandedPaths.value.add(path)
+  }
+}
+
+const toggleFilePathExpand = (path) => {
+  if (expandedFilePaths.value.has(path)) {
+    expandedFilePaths.value.delete(path)
+  } else {
+    expandedFilePaths.value.add(path)
+  }
+}
+
+const enterFileBrowser = (repoPath, branch) => {
+  viewMode.value = 'file-browser'
+  currentRepoPath.value = repoPath
+  currentFilePath.value = ''
+  currentBranch.value = branch || ''
+}
+
+const navigateToPath = (filePath) => {
+  currentFilePath.value = filePath
+}
+
+const handleNavigate = (filePath) => {
+  if (viewMode.value !== 'file-browser') {
+    enterFileBrowser(selectedNode.value.path, currentBranch.value)
+  }
+  navigateToPath(filePath)
+
+  // 自动展开左侧文件树到当前路径
+  if (filePath) {
+    const parts = filePath.split('/')
+    let currentPath = ''
+    for (const part of parts) {
+      currentPath = currentPath ? `${currentPath}/${part}` : part
+      expandedFilePaths.value.add(currentPath)
+    }
+  }
+}
+
+const returnToTree = () => {
+  viewMode.value = 'tree'
+  currentRepoPath.value = ''
+  currentFilePath.value = ''
+}
+
+const handleFileSelected = (file) => {
+  console.log('File selected:', file)
 }
 
 const countRepositories = (node) => {
@@ -138,12 +233,44 @@ const refreshTree = () => {
 
 const getBreadcrumbs = () => {
   if (!selectedNode.value) return []
-  return selectedNode.value.path.split('/').map(part => {
-    if (part.endsWith('.git')) {
-      return part.slice(0, -4)
+
+  if (viewMode.value === 'file-browser') {
+    const breadcrumbs = []
+    const repoName = selectedNode.value.name.replace('.git', '')
+    breadcrumbs.push({
+      name: repoName,
+      path: '',
+      isRepo: true
+    })
+
+    if (currentFilePath.value) {
+      const pathParts = currentFilePath.value.split('/')
+      pathParts.forEach((part, index) => {
+        const fullPath = pathParts.slice(0, index + 1).join('/')
+        breadcrumbs.push({
+          name: part,
+          path: fullPath,
+          isRepo: false
+        })
+      })
     }
-    return part
-  })
+
+    return breadcrumbs
+  } else {
+    return selectedNode.value.path.split('/').map(part => ({
+      name: part.replace('.git', ''),
+      path: '',
+      isRepo: false
+    }))
+  }
+}
+
+const handleBreadcrumbClick = (crumb, index) => {
+  if (index === 0 && viewMode.value === 'file-browser') {
+    currentFilePath.value = ''
+  } else if (crumb.path !== undefined && viewMode.value === 'file-browser') {
+    navigateToPath(crumb.path)
+  }
 }
 
 onMounted(() => {
@@ -316,6 +443,13 @@ onMounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
+}
+
+.file-browser-container {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .content {

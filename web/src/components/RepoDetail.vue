@@ -90,14 +90,27 @@
             <div v-if="detail.files.length === 0" class="empty-files">
               This repository is empty
             </div>
-            <div v-else class="files-list">
-              <div v-for="file in detail.files" :key="file.path" class="file-item">
-                <div class="file-info">
-                  <span class="file-icon">{{ file.is_dir ? '📁' : '📄' }}</span>
-                  <span class="file-name">{{ file.name }}</span>
-                </div>
-                <div class="file-meta">
-                  <span class="file-size" v-if="!file.is_dir">{{ formatSize(file.size) }}</span>
+            <div v-else>
+              <div class="files-header">
+                <div class="header-col col-name">名称</div>
+                <div class="header-col col-message">最后提交</div>
+                <div class="header-col col-date">最后更新</div>
+                <div class="header-col col-size">大小</div>
+              </div>
+              <div class="files-list">
+                <div
+                  v-for="file in detail.files"
+                  :key="file.path"
+                  class="file-item"
+                  @click="handleFileClick(file)"
+                >
+                  <div class="file-info">
+                    <span class="file-icon">{{ file.is_dir ? '📁' : '📄' }}</span>
+                    <span class="file-name">{{ file.name }}</span>
+                  </div>
+                  <div class="file-message">{{ file.commit_message || '' }}</div>
+                  <div class="file-date">{{ file.commit_date || '' }}</div>
+                  <div class="file-size">{{ file.is_dir ? '-' : formatSize(file.size) }}</div>
                 </div>
               </div>
             </div>
@@ -179,8 +192,18 @@ const props = defineProps({
   repoPath: {
     type: String,
     required: true
+  },
+  currentPath: {
+    type: String,
+    default: ''
+  },
+  branch: {
+    type: String,
+    default: ''
   }
 })
+
+const emit = defineEmits(['navigate', 'file-selected'])
 
 const detail = ref(null)
 const loading = ref(false)
@@ -200,11 +223,24 @@ const loadDetail = async () => {
   error.value = ''
 
   try {
-    const response = await fetch(`/api/repo/${props.repoPath}`)
+    const params = new URLSearchParams()
+    if (props.currentPath) {
+      params.append('path', props.currentPath)
+    }
+    if (props.branch) {
+      params.append('branch', props.branch)
+    }
+
+    const url = `/api/repo/${props.repoPath}${params.toString() ? '?' + params.toString() : ''}`
+    console.log('Loading repo detail from URL:', url)
+    console.log('props.repoPath:', props.repoPath)
+    const response = await fetch(url)
     if (!response.ok) {
       throw new Error('Failed to load repository details')
     }
     detail.value = await response.json()
+    console.log('Loaded detail:', detail.value)
+    console.log('Files count:', detail.value.files.length)
   } catch (err) {
     error.value = err.message
   } finally {
@@ -248,6 +284,14 @@ const copyToClipboard = async (text) => {
   }
 }
 
+const handleFileClick = (file) => {
+  if (file.is_dir) {
+    emit('navigate', file.path)
+  } else {
+    emit('file-selected', file)
+  }
+}
+
 const formatSize = (bytes) => {
   if (bytes === 0) return '-'
   const k = 1024
@@ -259,6 +303,10 @@ const formatSize = (bytes) => {
 watch(() => props.repoPath, () => {
   loadDetail()
 }, { immediate: true })
+
+watch(() => [props.currentPath, props.branch], () => {
+  loadDetail()
+})
 </script>
 
 <style scoped>
@@ -530,6 +578,28 @@ watch(() => props.repoPath, () => {
   background: white;
 }
 
+.files-header {
+  display: grid;
+  grid-template-columns: 2fr 2fr 1fr 100px;
+  gap: 16px;
+  padding: 8px 16px;
+  background: #f6f8fa;
+  border-bottom: 1px solid #d0d7de;
+  font-size: 12px;
+  font-weight: 600;
+  color: #57606a;
+}
+
+.header-col {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-size {
+  text-align: right;
+}
+
 .empty-files {
   padding: 48px;
   text-align: center;
@@ -542,12 +612,14 @@ watch(() => props.repoPath, () => {
 }
 
 .file-item {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 2fr 2fr 1fr 100px;
+  gap: 16px;
   align-items: center;
   padding: 8px 16px;
   border-bottom: 1px solid #d0d7de;
   transition: background 0.2s;
+  cursor: pointer;
 }
 
 .file-item:last-child {
@@ -562,7 +634,6 @@ watch(() => props.repoPath, () => {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
   min-width: 0;
 }
 
@@ -580,16 +651,25 @@ watch(() => props.repoPath, () => {
   white-space: nowrap;
 }
 
-.file-meta {
-  display: flex;
-  align-items: center;
-  gap: 16px;
+.file-message {
+  font-size: 13px;
   color: #57606a;
-  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-date {
+  font-size: 13px;
+  color: #57606a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-size {
-  min-width: 60px;
+  font-size: 13px;
+  color: #57606a;
   text-align: right;
 }
 

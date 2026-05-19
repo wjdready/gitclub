@@ -17,14 +17,16 @@
         :key="child.path"
         :node="child"
         :selected-path="selectedPath"
+        :expanded-paths="expandedPaths"
         @select="$emit('select', $event)"
+        @toggle="$emit('toggle', $event)"
       />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 
 const props = defineProps({
   node: {
@@ -34,15 +36,18 @@ const props = defineProps({
   selectedPath: {
     type: String,
     default: ''
+  },
+  expandedPaths: {
+    type: Set,
+    required: true
   }
 })
 
-const emit = defineEmits(['select'])
-
-const isExpanded = ref(false)
+const emit = defineEmits(['select', 'toggle'])
 
 const isSelected = computed(() => props.selectedPath === props.node.path)
 const hasChildren = computed(() => props.node.children && props.node.children.length > 0)
+const isExpanded = computed(() => props.expandedPaths.has(props.node.path))
 const displayName = computed(() => {
   if (props.node.is_repo && props.node.name.endsWith('.git')) {
     return props.node.name.slice(0, -4)
@@ -51,12 +56,12 @@ const displayName = computed(() => {
 })
 
 const toggleExpand = () => {
-  isExpanded.value = !isExpanded.value
+  emit('toggle', props.node.path)
 }
 
 const handleClick = () => {
   if (!props.node.is_repo && hasChildren.value) {
-    isExpanded.value = !isExpanded.value
+    toggleExpand()
   }
   emit('select', props.node)
 }

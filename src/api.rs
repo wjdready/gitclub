@@ -159,8 +159,15 @@ pub struct LanguageInfo {
     pub color: String,
 }
 
+#[derive(Deserialize)]
+pub struct RepoDetailQuery {
+    pub path: Option<String>,
+    pub branch: Option<String>,
+}
+
 pub async fn get_repo_detail(
     axum::extract::Path(repo_path): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<RepoDetailQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let full_path = state.scanner.repos_path().join(&repo_path);
@@ -171,14 +178,22 @@ pub async fn get_repo_detail(
 
     let default_branch = get_default_branch(&full_path);
     let branches = get_branches(&full_path);
-    let files = if let Some(ref branch) = default_branch {
-        get_files(&full_path, branch)
+
+    let branch = query.branch.or(default_branch.clone());
+    let file_path = query.path.as_deref().unwrap_or("");
+
+    let files = if let Some(ref b) = branch {
+        get_files(&full_path, b, file_path)
     } else {
         Vec::new()
     };
 
-    let readme_content = if let Some(ref branch) = default_branch {
-        get_readme_content(&full_path, branch)
+    let readme_content = if file_path.is_empty() {
+        if let Some(ref b) = branch {
+            get_readme_content(&full_path, b)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -186,7 +201,7 @@ pub async fn get_repo_detail(
     let detail = RepoDetail {
         name: repo_path.split('/').last().unwrap_or(&repo_path).trim_end_matches(".git").to_string(),
         path: repo_path,
-        default_branch,
+        default_branch: branch,
         branches,
         files,
         readme_content,
@@ -199,6 +214,7 @@ pub async fn get_repo_detail(
 }
 
 fn get_default_branch(repo_path: &std::path::Path) -> Option<String> {
+    // 尝试获取 HEAD 指向的分支
     let output = Command::new("git")
         .args(&["symbolic-ref", "HEAD"])
         .current_dir(repo_path)
@@ -207,11 +223,29 @@ fn get_default_branch(repo_path: &std::path::Path) -> Option<String> {
 
     if output.status.success() {
         let branch = String::from_utf8_lossy(&output.stdout);
-        let branch = branch.trim().strip_prefix("refs/heads/")?;
-        Some(branch.to_string())
-    } else {
-        None
+        if let Some(branch) = branch.trim().strip_prefix("refs/heads/") {
+            return Some(branch.to_string());
+        }
     }
+
+    // 如果 symbolic-ref 失败，尝试获取第一个分支
+    let output = Command::new("git")
+        .args(&["branch"])
+        .current_dir(repo_path)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let branches = String::from_utf8_lossy(&output.stdout);
+        let first_branch = branches
+            .lines()
+            .next()?
+            .trim()
+            .trim_start_matches("* ");
+        return Some(first_branch.to_string());
+    }
+
+    None
 }
 
 fn get_branches(repo_path: &std::path::Path) -> Vec<String> {
@@ -231,9 +265,15 @@ fn get_branches(repo_path: &std::path::Path) -> Vec<String> {
     }
 }
 
-fn get_files(repo_path: &std::path::Path, branch: &str) -> Vec<RepoFile> {
+fn get_files(repo_path: &std::path::Path, branch: &str, file_path: &str) -> Vec<RepoFile> {
+    let tree_ref = if file_path.is_empty() {
+        branch.to_string()
+    } else {
+        format!("{}:{}", branch, file_path)
+    };
+
     let output = Command::new("git")
-        .args(&["ls-tree", "-l", branch])
+        .args(&["ls-tree", "-l", &tree_ref])
         .current_dir(repo_path)
         .output();
 
@@ -248,13 +288,22 @@ fn get_files(repo_path: &std::path::Path, branch: &str) -> Vec<RepoFile> {
                         let size = if is_dir { 0 } else { parts[3].parse().unwrap_or(0) };
                         let name = parts.get(4..).map(|p| p.join(" ")).unwrap_or_default();
 
+                        let full_path = if file_path.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{}/{}", file_path, name)
+                        };
+
+                        // 获取该文件的最后提交信息
+                        let (commit_message, commit_date) = get_file_last_commit(repo_path, branch, &full_path);
+
                         Some(RepoFile {
                             name: name.clone(),
-                            path: name,
+                            path: full_path,
                             is_dir,
                             size,
-                            commit_message: None,
-                            commit_date: None,
+                            commit_message,
+                            commit_date,
                         })
                     } else {
                         None
@@ -274,6 +323,26 @@ fn get_files(repo_path: &std::path::Path, branch: &str) -> Vec<RepoFile> {
             files
         }
         _ => Vec::new()
+    }
+}
+
+fn get_file_last_commit(repo_path: &std::path::Path, branch: &str, file_path: &str) -> (Option<String>, Option<String>) {
+    let output = Command::new("git")
+        .args(&["log", "-1", "--format=%s|%ar", branch, "--", file_path])
+        .current_dir(repo_path)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let result = String::from_utf8_lossy(&output.stdout);
+            let parts: Vec<&str> = result.trim().split('|').collect();
+            if parts.len() == 2 {
+                (Some(parts[0].to_string()), Some(parts[1].to_string()))
+            } else {
+                (None, None)
+            }
+        }
+        _ => (None, None)
     }
 }
 
