@@ -9,6 +9,8 @@ use crate::db::Database;
 use crate::scanner::RepoScanner;
 use std::sync::Arc;
 use std::process::Command;
+use std::path::Path;
+use std::fs;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -420,4 +422,121 @@ pub async fn get_file_content(
         }
         _ => (StatusCode::NOT_FOUND, "File not found").into_response()
     }
+}
+
+#[derive(Serialize)]
+pub struct GroupDetail {
+    pub name: String,
+    pub path: String,
+    pub total_size: u64,
+    pub total_size_str: String,
+    pub repositories: Vec<GroupRepoInfo>,
+    pub subgroups: Vec<GroupSubgroupInfo>,
+}
+
+#[derive(Serialize)]
+pub struct GroupRepoInfo {
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub size_str: String,
+    pub default_branch: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct GroupSubgroupInfo {
+    pub name: String,
+    pub path: String,
+}
+
+fn dir_size(path: &Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                total += dir_size(&p);
+            } else if let Ok(m) = p.metadata() {
+                total += m.len();
+            }
+        }
+    }
+    total
+}
+
+fn format_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
+    if bytes == 0 {
+        return "0 B".to_string();
+    }
+    let mut size = bytes as f64;
+    let mut unit_idx = 0;
+    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_idx += 1;
+    }
+    if unit_idx == 0 {
+        format!("{} {}", bytes, UNITS[unit_idx])
+    } else {
+        format!("{:.2} {}", size, UNITS[unit_idx])
+    }
+}
+
+pub async fn get_group_detail(
+    axum::extract::Path(group_path): axum::extract::Path<String>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let full_path = state.scanner.repos_path().join(&group_path);
+
+    if !full_path.exists() || !full_path.is_dir() {
+        return (StatusCode::NOT_FOUND, "Group not found").into_response();
+    }
+
+    let mut repositories = Vec::new();
+    let mut subgroups = Vec::new();
+    let mut total_size = 0u64;
+
+    if let Ok(entries) = fs::read_dir(&full_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            if path.is_dir() {
+                if name.ends_with(".git") {
+                    let size = dir_size(&path);
+                    let default_branch = get_default_branch(&path);
+                    total_size += size;
+                    repositories.push(GroupRepoInfo {
+                        name: name.trim_end_matches(".git").to_string(),
+                        path: format!("{}/{}", group_path, name),
+                        size,
+                        size_str: format_size(size),
+                        default_branch,
+                    });
+                } else {
+                    subgroups.push(GroupSubgroupInfo {
+                        name,
+                        path: format!("{}/{}", group_path, name),
+                    });
+                }
+            }
+        }
+    }
+
+    // Sort: repositories by name, subgroups by name
+    repositories.sort_by(|a, b| a.name.cmp(&b.name));
+    subgroups.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let name = group_path.split('/').last().unwrap_or(&group_path).to_string();
+
+    let detail = GroupDetail {
+        name,
+        path: group_path,
+        total_size,
+        total_size_str: format_size(total_size),
+        repositories,
+        subgroups,
+    };
+
+    Json(detail).into_response()
 }

@@ -4,8 +4,8 @@
       <div class="header-content">
         <h1 class="logo">GitClub</h1>
         <nav class="nav">
-          <a href="#" class="nav-link">Repositories</a>
-          <a href="#" class="nav-link">Groups</a>
+          <a href="#" class="nav-link" :class="{ active: !selectedNode }" @click.prevent="goHome">Repositories</a>
+          <a href="#" class="nav-link" :class="{ active: !selectedNode }" @click.prevent="goHome">Groups</a>
         </nav>
       </div>
     </header>
@@ -110,6 +110,9 @@
           </div>
         </div>
 
+        <div v-else-if="!initialRouteResolved" class="empty-state">
+          <p>Loading...</p>
+        </div>
         <div v-else class="empty-state">
           <p>Select a group or repository to view details</p>
         </div>
@@ -125,7 +128,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import TreeNode from './components/TreeNode.vue'
 import CreateModal from './components/CreateModal.vue'
 import RepoDetail from './components/RepoDetail.vue'
@@ -146,6 +149,9 @@ const selectedFile = ref(null)
 const sidebarWidth = ref(320)
 const MIN_SIDEBAR = 200
 const MAX_SIDEBAR = 600
+const initialRouteResolved = ref(false)
+// 保存初始 URL，防止 syncUrl 的 immediate watcher 在微任务中修改 location.pathname
+const initialPathname = window.location.pathname
 
 const scrollSelectedIntoView = () => {
   nextTick(() => {
@@ -296,6 +302,18 @@ const refreshTree = () => {
   loadTree()
 }
 
+const goHome = () => {
+  selectedNode.value = null
+  selectedPath.value = ''
+  viewMode.value = 'tree'
+  currentRepoPath.value = ''
+  currentFilePath.value = ''
+  currentBranch.value = ''
+  selectedFile.value = null
+  expandedPaths.value = new Set()
+  expandedFilePaths.value = new Set()
+}
+
 const getBreadcrumbs = () => {
   if (!selectedNode.value) return []
 
@@ -332,10 +350,11 @@ const getBreadcrumbs = () => {
 
     return breadcrumbs
   } else {
-    return selectedNode.value.path.split('/').map(part => ({
+    const parts = selectedNode.value.path.split('/')
+    return parts.map((part, index) => ({
       name: part.replace('.git', ''),
-      path: '',
-      isRepo: false
+      path: parts.slice(0, index + 1).join('/'),
+      isRepo: index === parts.length - 1 ? selectedNode.value.is_repo : false
     }))
   }
 }
@@ -350,11 +369,153 @@ const handleBreadcrumbClick = (crumb, index) => {
       navigateToPath(crumb.path)
       scrollSelectedIntoView()
     }
+  } else if (crumb.path) {
+    // 树视图模式：点击面包屑段导航到对应组/仓库
+    const targetNode = findNodeByPath(tree.value, crumb.path)
+    if (targetNode) {
+      selectNode(targetNode)
+      // 展开祖先路径
+      const parts = crumb.path.split('/')
+      for (let p = 1; p < parts.length; p++) {
+        expandedPaths.value.add(parts.slice(0, p).join('/'))
+      }
+    }
   }
 }
 
-onMounted(() => {
-  loadTree()
+function syncUrl() {
+  let path = ''
+  const cleanRepoPath = selectedNode.value?.path?.replace(/\.git$/, '') || ''
+  if (viewMode.value === 'file-browser' && selectedNode.value?.is_repo) {
+    if (selectedFile.value) {
+      path = `/${cleanRepoPath}/blob/${currentBranch.value || 'HEAD'}/${selectedFile.value}`
+    } else if (currentFilePath.value) {
+      path = `/${cleanRepoPath}/tree/${currentBranch.value || 'HEAD'}/${currentFilePath.value}`
+    } else {
+      path = `/${cleanRepoPath}/tree`
+    }
+  } else if (selectedNode.value) {
+    path = '/' + cleanRepoPath
+  }
+  const url = path || '/'
+  window.history.replaceState(null, '', url)
+}
+
+function findNodeByPath(nodes, targetPath) {
+  for (const node of nodes) {
+    if (node.path === targetPath) return node
+    if (node.children) {
+      const found = findNodeByPath(node.children, targetPath)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+function resolveRoute() {
+  const pathname = initialPathname.replace(/\/$/, '') || ''
+  if (!pathname) return
+  console.log('Resolving route:', pathname)
+
+  const segments = pathname.split('/').filter(Boolean)
+  console.log('Segments:', segments)
+
+  // 尝试从长到短匹配仓库路径（仓库路径可能包含斜杠）
+  for (let i = segments.length; i >= 1; i--) {
+    const candidatePath = segments.slice(0, i).join('/')
+    // 先尝试加上 .git 匹配（标准 URL 格式，如 /backend/some/myproject）
+    let repoPath = candidatePath + '.git'
+    let repo = findNodeByPath(tree.value, repoPath)
+    // 如果没找到，并且 URL 中已经包含 .git，则直接尝试匹配
+    if (!repo && candidatePath.endsWith('.git')) {
+      repoPath = candidatePath
+      repo = findNodeByPath(tree.value, repoPath)
+    }
+    console.log('Trying repo:', repoPath, repo ? 'found' : 'not found')
+    if (repo) {
+      console.log('Found repo:', repo.path)
+      selectedPath.value = repo.path
+      selectedNode.value = repo
+
+      // 展开左侧组树到当前节点
+      const candidateParts = candidatePath.split('/')
+      for (let p = 1; p < candidateParts.length; p++) {
+        expandedPaths.value.add(candidateParts.slice(0, p).join('/'))
+      }
+
+      const remaining = segments.slice(i)
+
+      if (remaining.length >= 1) {
+        // 有子路径（/tree/... 或 /blob/...），进入文件浏览模式
+        enterFileBrowser(repo.path, '')
+        const action = remaining[0] // blob 或 tree
+        const branch = remaining[1] || ''
+        const filePath = remaining.slice(2).join('/')
+        currentBranch.value = branch === 'HEAD' ? '' : branch
+        if (filePath) {
+          if (action === 'blob') {
+            selectedFile.value = filePath
+            const lastSlash = filePath.lastIndexOf('/')
+            currentFilePath.value = lastSlash >= 0 ? filePath.substring(0, lastSlash) : ''
+            // 展开文件所在目录
+            const newExpanded = new Set()
+            if (currentFilePath.value) {
+              const parts = currentFilePath.value.split('/')
+              let current = ''
+              for (const part of parts) {
+                current = current ? `${current}/${part}` : part
+                newExpanded.add(current)
+              }
+            }
+            expandedFilePaths.value = newExpanded
+          } else {
+            handleNavigate(filePath)
+          }
+        }
+      }
+      // 没有子路径：URL 只是仓库路径，保持组树视图
+      return
+    }
+  }
+
+  // 没找到仓库，尝试匹配组节点
+  for (let i = segments.length; i >= 1; i--) {
+    const groupPath = segments.slice(0, i).join('/')
+    console.log('Trying group:', groupPath)
+    const group = findNodeByPath(tree.value, groupPath)
+    if (group) {
+      console.log('Found group:', group.path)
+      selectNode(group)
+      // 展开左侧组树到当前节点
+      const groupParts = groupPath.split('/')
+      for (let p = 1; p < groupParts.length; p++) {
+        expandedPaths.value.add(groupParts.slice(0, p).join('/'))
+      }
+      return
+    }
+  }
+  console.log('No matching route found for:', pathname)
+}
+
+watch(
+  [viewMode, selectedFile, currentFilePath, currentBranch, selectedNode],
+  () => nextTick(syncUrl),
+  { immediate: true }
+)
+
+// 当树数据加载后，重新尝试解析路由（处理边缘情况）
+watch(tree, (newTree) => {
+  if (!initialRouteResolved.value && newTree.length > 0 && initialPathname !== '/') {
+    console.log('Tree loaded, re-resolving route...')
+    resolveRoute()
+    initialRouteResolved.value = true
+  }
+})
+
+onMounted(async () => {
+  await loadTree()
+  resolveRoute()
+  initialRouteResolved.value = true
 })
 </script>
 
@@ -410,6 +571,12 @@ onMounted(() => {
 .nav-link:hover {
   background: rgba(255, 255, 255, 0.1);
   color: white;
+}
+
+.nav-link.active {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  font-weight: 500;
 }
 
 .breadcrumb {
