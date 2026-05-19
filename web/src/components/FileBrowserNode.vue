@@ -19,11 +19,13 @@
         :key="child.path"
         :item="child"
         :current-path="currentPath"
+        :selected-file-path="selectedFilePath"
         :repo-path="repoPath"
         :branch="branch"
         :expanded-file-paths="expandedFilePaths"
         @navigate="$emit('navigate', $event)"
         @toggle="$emit('toggle', $event)"
+        @file-select="$emit('file-select', $event)"
       />
     </div>
   </div>
@@ -41,6 +43,10 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  selectedFilePath: {
+    type: String,
+    default: ''
+  },
   repoPath: {
     type: String,
     required: true
@@ -55,12 +61,17 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['navigate', 'toggle'])
+const emit = defineEmits(['navigate', 'toggle', 'file-select'])
 
 const children = ref([])
 const loading = ref(false)
 
-const isSelected = computed(() => props.currentPath === props.item.path)
+const isSelected = computed(() => {
+  if (props.selectedFilePath) {
+    return props.selectedFilePath === props.item.path
+  }
+  return props.currentPath === props.item.path
+})
 const isExpanded = computed(() => props.expandedFilePaths.has(props.item.path))
 
 const loadChildren = async () => {
@@ -94,6 +105,8 @@ const handleClick = async () => {
   if (props.item.is_dir) {
     await toggleExpand()
     emit('navigate', props.item.path)
+  } else {
+    emit('file-select', props.item.path)
   }
 }
 

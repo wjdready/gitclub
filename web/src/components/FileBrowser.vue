@@ -12,11 +12,13 @@
         :key="item.path"
         :item="item"
         :current-path="currentPath"
+        :selected-file-path="selectedFilePath"
         :repo-path="repoPath"
         :branch="branch"
         :expanded-file-paths="expandedFilePaths"
         @navigate="$emit('navigate', $event)"
         @toggle="$emit('toggle', $event)"
+        @file-select="$emit('file-select', $event)"
       />
     </div>
   </div>
@@ -35,6 +37,10 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  selectedFilePath: {
+    type: String,
+    default: ''
+  },
   branch: {
     type: String,
     default: 'main'
@@ -45,7 +51,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['navigate', 'back', 'toggle'])
+const emit = defineEmits(['navigate', 'back', 'toggle', 'file-select'])
 
 const fileTree = ref([])
 const loading = ref(false)

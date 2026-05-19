@@ -361,3 +361,63 @@ fn get_readme_content(repo_path: &std::path::Path, branch: &str) -> Option<Strin
     }
     None
 }
+
+#[derive(Serialize)]
+pub struct FileContent {
+    pub content: String,
+    pub is_binary: bool,
+    pub size: u64,
+}
+
+#[derive(Deserialize)]
+pub struct FileContentQuery {
+    pub file: String,
+    pub branch: Option<String>,
+}
+
+pub async fn get_file_content(
+    axum::extract::Path(repo_path): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<FileContentQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let full_repo_path = state.scanner.repos_path().join(&repo_path);
+
+    if !full_repo_path.exists() {
+        return (StatusCode::NOT_FOUND, "Repository not found").into_response();
+    }
+
+    let default_branch = get_default_branch(&full_repo_path);
+    let branch = query.branch.or(default_branch);
+
+    if branch.is_none() {
+        return (StatusCode::BAD_REQUEST, "No branch specified and no default branch found").into_response();
+    }
+
+    let branch = branch.unwrap();
+    let output = Command::new("git")
+        .args(&["show", &format!("{}:{}", branch, query.file)])
+        .current_dir(&full_repo_path)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let content = output.stdout;
+            let is_binary = content.iter().take(8000).any(|&b| b == 0);
+
+            if is_binary {
+                Json(FileContent {
+                    content: String::from("[Binary file]"),
+                    is_binary: true,
+                    size: content.len() as u64,
+                }).into_response()
+            } else {
+                Json(FileContent {
+                    content: String::from_utf8_lossy(&content).to_string(),
+                    is_binary: false,
+                    size: content.len() as u64,
+                }).into_response()
+            }
+        }
+        _ => (StatusCode::NOT_FOUND, "File not found").into_response()
+    }
+}

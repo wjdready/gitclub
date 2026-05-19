@@ -68,6 +68,7 @@ async fn main() {
         .route("/api/groups", post(api::create_group))
         .route("/api/repos", post(api::create_repo))
         .route("/api/repo/*path", get(api::get_repo_detail))
+        .route("/api/repo-file/*path", get(api::get_file_content))
         .with_state(api_state)
         .route("/:group/:repo/info/refs", get(git_http::git_info_refs))
         .route("/:group/:repo/git-upload-pack", post(git_http::git_upload_pack))

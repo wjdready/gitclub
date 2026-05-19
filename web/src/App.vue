@@ -1,5 +1,5 @@
 <template>
-  <div class="app">
+  <div class="app" :style="{ '--sidebar-width': sidebarWidth + 'px' }">
     <header class="header">
       <div class="header-content">
         <h1 class="logo">GitClub</h1>
@@ -47,18 +47,31 @@
           <FileBrowser
             :repo-path="currentRepoPath"
             :current-path="currentFilePath"
+            :selected-file-path="selectedFile"
             :branch="currentBranch"
             :expanded-file-paths="expandedFilePaths"
             @navigate="navigateToPath"
             @back="returnToTree"
             @toggle="toggleFilePathExpand"
+            @file-select="handleFileSelected"
           />
         </div>
+        <div
+          class="resize-handle"
+          @mousedown.prevent="startResize"
+        ></div>
       </aside>
 
       <main class="content">
+        <FileViewer
+          v-if="selectedFile && selectedNode && selectedNode.is_repo"
+          :repo-path="selectedNode.path"
+          :file-path="selectedFile"
+          :branch="currentBranch"
+          @back="selectedFile = null"
+        />
         <RepoDetail
-          v-if="selectedNode && selectedNode.is_repo"
+          v-else-if="selectedNode && selectedNode.is_repo"
           :repo-path="selectedNode.path"
           :current-path="currentFilePath"
           :branch="currentBranch"
@@ -112,11 +125,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import TreeNode from './components/TreeNode.vue'
 import CreateModal from './components/CreateModal.vue'
 import RepoDetail from './components/RepoDetail.vue'
 import FileBrowser from './components/FileBrowser.vue'
+import FileViewer from './components/FileViewer.vue'
 
 const tree = ref([])
 const selectedPath = ref('')
@@ -128,6 +142,43 @@ const currentFilePath = ref('')
 const currentBranch = ref('')
 const expandedPaths = ref(new Set())
 const expandedFilePaths = ref(new Set())
+const selectedFile = ref(null)
+const sidebarWidth = ref(320)
+const MIN_SIDEBAR = 200
+const MAX_SIDEBAR = 600
+
+const scrollSelectedIntoView = () => {
+  nextTick(() => {
+    const selected = document.querySelector('.file-browser-container .node-content.selected')
+    if (!selected) return
+    const container = selected.closest('.file-tree') || selected.closest('.file-browser-container')
+    if (!container) return
+    const cr = container.getBoundingClientRect()
+    const sr = selected.getBoundingClientRect()
+    if (sr.bottom > cr.bottom || sr.top < cr.top) {
+      selected.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  })
+}
+
+const startResize = (e) => {
+  const startX = e.clientX
+  const startWidth = sidebarWidth.value
+  const onMouseMove = (ev) => {
+    const newWidth = startWidth + (ev.clientX - startX)
+    sidebarWidth.value = Math.max(MIN_SIDEBAR, Math.min(MAX_SIDEBAR, newWidth))
+  }
+  const onMouseUp = () => {
+    window.removeEventListener('mousemove', onMouseMove)
+    window.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
 
 const loadTree = async () => {
   try {
@@ -169,6 +220,8 @@ const enterFileBrowser = (repoPath, branch) => {
   currentRepoPath.value = repoPath
   currentFilePath.value = ''
   currentBranch.value = branch || ''
+  // 从组树进入文件浏览时，清除上一次的展开记录
+  expandedFilePaths.value = new Set()
 }
 
 const navigateToPath = (filePath) => {
@@ -180,26 +233,38 @@ const handleNavigate = (filePath) => {
     enterFileBrowser(selectedNode.value.path, currentBranch.value)
   }
   navigateToPath(filePath)
-
-  // 自动展开左侧文件树到当前路径
+  selectedFile.value = null
+  // 只展开当前进入的目录及其必需的祖先路径
+  const newExpanded = new Set()
   if (filePath) {
     const parts = filePath.split('/')
-    let currentPath = ''
+    let current = ''
     for (const part of parts) {
-      currentPath = currentPath ? `${currentPath}/${part}` : part
-      expandedFilePaths.value.add(currentPath)
+      current = current ? `${current}/${part}` : part
+      newExpanded.add(current)
     }
   }
+  expandedFilePaths.value = newExpanded
+  scrollSelectedIntoView()
 }
 
 const returnToTree = () => {
   viewMode.value = 'tree'
   currentRepoPath.value = ''
   currentFilePath.value = ''
+  selectedFile.value = null
 }
 
 const handleFileSelected = (file) => {
-  console.log('File selected:', file)
+  if (viewMode.value !== 'file-browser') {
+    enterFileBrowser(selectedNode.value.path, currentBranch.value)
+  }
+  const filePath = typeof file === 'string' ? file : file.path
+  selectedFile.value = filePath
+  // 更新面包屑上下文为文件所在的目录
+  const lastSlash = filePath.lastIndexOf('/')
+  currentFilePath.value = lastSlash >= 0 ? filePath.substring(0, lastSlash) : ''
+  scrollSelectedIntoView()
 }
 
 const countRepositories = (node) => {
@@ -255,6 +320,16 @@ const getBreadcrumbs = () => {
       })
     }
 
+    // 如果正在查看文件，在面包屑中追加文件名
+    if (selectedFile.value) {
+      breadcrumbs.push({
+        name: selectedFile.value.split('/').pop(),
+        path: selectedFile.value,
+        isRepo: false,
+        isFile: true
+      })
+    }
+
     return breadcrumbs
   } else {
     return selectedNode.value.path.split('/').map(part => ({
@@ -266,10 +341,15 @@ const getBreadcrumbs = () => {
 }
 
 const handleBreadcrumbClick = (crumb, index) => {
-  if (index === 0 && viewMode.value === 'file-browser') {
-    currentFilePath.value = ''
-  } else if (crumb.path !== undefined && viewMode.value === 'file-browser') {
-    navigateToPath(crumb.path)
+  if (viewMode.value === 'file-browser') {
+    if (crumb.isFile) return // 点击文件名不执行任何操作
+    selectedFile.value = null
+    if (index === 0) {
+      returnToTree()
+    } else if (crumb.path !== undefined) {
+      navigateToPath(crumb.path)
+      scrollSelectedIntoView()
+    }
   }
 }
 
@@ -338,7 +418,7 @@ onMounted(() => {
   border-bottom: 1px solid #d0d7de;
   position: fixed;
   top: 48px;
-  left: 320px;
+  left: var(--sidebar-width, 320px);
   right: 0;
   z-index: 99;
   display: flex;
@@ -384,7 +464,7 @@ onMounted(() => {
 }
 
 .sidebar {
-  width: 320px;
+  width: var(--sidebar-width, 320px);
   background: white;
   border-right: 1px solid #d0d7de;
   display: flex;
@@ -394,6 +474,21 @@ onMounted(() => {
   bottom: 0;
   left: 0;
   z-index: 50;
+}
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 60;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: rgba(9, 105, 218, 0.15);
 }
 
 .app:has(.breadcrumb) .sidebar {
@@ -455,7 +550,7 @@ onMounted(() => {
 .content {
   flex: 1;
   overflow-y: auto;
-  margin-left: 320px;
+  margin-left: var(--sidebar-width, 320px);
   padding: 8px 24px 24px 24px;
 }
 
