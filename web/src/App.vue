@@ -1,76 +1,153 @@
 <template>
   <div class="app">
     <header class="header">
-      <h1>GitClub</h1>
-      <p class="subtitle">Git 托管服务器</p>
+      <div class="header-content">
+        <h1 class="logo">GitClub</h1>
+        <nav class="nav">
+          <a href="#" class="nav-link">Repositories</a>
+          <a href="#" class="nav-link">Groups</a>
+        </nav>
+      </div>
     </header>
 
-    <main class="main">
-      <div class="card">
-        <h2>服务器状态</h2>
-        <div class="status">
-          <span class="status-indicator" :class="{ online: isOnline }"></span>
-          <span>{{ isOnline ? '在线' : '离线' }}</span>
-        </div>
-      </div>
+    <div class="breadcrumb" v-if="selectedNode">
+      <span class="breadcrumb-item" v-for="(part, index) in getBreadcrumbs()" :key="index">
+        <span v-if="index > 0" class="breadcrumb-separator">/</span>
+        <a href="#" class="breadcrumb-link">{{ part }}</a>
+      </span>
+    </div>
 
-      <div class="card" v-if="serverInfo">
-        <h2>服务器信息</h2>
-        <div class="info">
-          <p><strong>消息:</strong> {{ serverInfo.message }}</p>
-          <p><strong>版本:</strong> {{ serverInfo.version }}</p>
+    <div class="main-container">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h2>Groups & Repositories</h2>
+          <button class="btn-new" @click="showCreateModal = true">New</button>
         </div>
-      </div>
-
-      <div class="card">
-        <h2>快速开始</h2>
-        <div class="quick-start">
-          <p>欢迎使用 GitClub！这是一个基于 Rust 和 Vue 的 Git 托管服务器。</p>
-          <ul>
-            <li>支持群组和子组的层级管理</li>
-            <li>灵活的用户权限控制</li>
-            <li>支持 HTTP 和 SSH 协议</li>
-          </ul>
+        <div class="tree-container">
+          <TreeNode
+            v-for="node in tree"
+            :key="node.path"
+            :node="node"
+            :selected-path="selectedPath"
+            @select="selectNode"
+          />
         </div>
-      </div>
-    </main>
+      </aside>
 
-    <footer class="footer">
-      <p>&copy; 2026 GitClub. All rights reserved.</p>
-    </footer>
+      <main class="content">
+        <RepoDetail v-if="selectedNode && selectedNode.is_repo" :repo-path="selectedNode.path" />
+
+        <div v-else-if="selectedNode && !selectedNode.is_repo" class="detail-panel">
+          <div class="detail-header">
+            <h2>{{ selectedNode.name }}</h2>
+            <span class="badge group">Group</span>
+          </div>
+
+          <div class="detail-body">
+            <div class="info-section">
+              <h3>Information</h3>
+              <div class="info-item">
+                <span class="label">Path:</span>
+                <code>{{ selectedNode.path }}</code>
+              </div>
+            </div>
+
+            <div class="info-section">
+              <h3>Group Statistics</h3>
+              <div class="stats">
+                <div class="stat-item">
+                  <span class="stat-value">{{ countRepositories(selectedNode) }}</span>
+                  <span class="stat-label">Repositories</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ countSubgroups(selectedNode) }}</span>
+                  <span class="stat-label">Subgroups</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="empty-state">
+          <p>Select a group or repository to view details</p>
+        </div>
+      </main>
+    </div>
+
+    <CreateModal
+      v-if="showCreateModal"
+      @close="showCreateModal = false"
+      @created="refreshTree"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import TreeNode from './components/TreeNode.vue'
+import CreateModal from './components/CreateModal.vue'
+import RepoDetail from './components/RepoDetail.vue'
 
-const isOnline = ref(false)
-const serverInfo = ref(null)
+const tree = ref([])
+const selectedPath = ref('')
+const selectedNode = ref(null)
+const showCreateModal = ref(false)
 
-const checkHealth = async () => {
+const loadTree = async () => {
   try {
-    const response = await fetch('/api/health')
-    isOnline.value = response.ok
+    const response = await fetch('/api/tree')
+    tree.value = await response.json()
   } catch (error) {
-    console.error('健康检查失败:', error)
-    isOnline.value = false
+    console.error('Failed to load tree:', error)
   }
 }
 
-const fetchServerInfo = async () => {
-  try {
-    const response = await fetch('/api/info')
-    if (response.ok) {
-      serverInfo.value = await response.json()
+const selectNode = (node) => {
+  selectedPath.value = node.path
+  selectedNode.value = node
+}
+
+const countRepositories = (node) => {
+  let count = 0
+  const traverse = (n) => {
+    if (n.is_repo) {
+      count++
+    } else {
+      n.children?.forEach(traverse)
     }
-  } catch (error) {
-    console.error('获取服务器信息失败:', error)
   }
+  traverse(node)
+  return count
+}
+
+const countSubgroups = (node) => {
+  let count = 0
+  const traverse = (n) => {
+    if (!n.is_repo && n !== node) {
+      count++
+    }
+    n.children?.forEach(traverse)
+  }
+  node.children?.forEach(traverse)
+  return count
+}
+
+const refreshTree = () => {
+  loadTree()
+}
+
+const getBreadcrumbs = () => {
+  if (!selectedNode.value) return []
+  return selectedNode.value.path.split('/').map(part => {
+    if (part.endsWith('.git')) {
+      return part.slice(0, -4)
+    }
+    return part
+  })
 }
 
 onMounted(() => {
-  checkHealth()
-  fetchServerInfo()
+  loadTree()
 })
 </script>
 
@@ -79,89 +156,274 @@ onMounted(() => {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background: #f6f8fa;
 }
 
 .header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #24292f;
   color: white;
-  padding: 2rem;
-  text-align: center;
+  padding: 12px 32px;
+  border-bottom: 1px solid #30363d;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: 48px;
+  box-sizing: border-box;
 }
 
-.header h1 {
-  margin: 0;
-  font-size: 2.5rem;
-}
-
-.subtitle {
-  margin: 0.5rem 0 0 0;
-  opacity: 0.9;
-}
-
-.main {
-  flex: 1;
-  max-width: 1200px;
-  width: 100%;
-  margin: 2rem auto;
-  padding: 0 1rem;
-  display: grid;
-  gap: 1.5rem;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-}
-
-.card {
-  background: white;
-  border-radius: 8px;
-  padding: 1.5rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.card h2 {
-  margin-top: 0;
-  color: #333;
-  font-size: 1.25rem;
-}
-
-.status {
+.header-content {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 1.1rem;
+  gap: 32px;
+  height: 100%;
 }
 
-.status-indicator {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #e74c3c;
-}
-
-.status-indicator.online {
-  background: #2ecc71;
-}
-
-.info p {
-  margin: 0.5rem 0;
-}
-
-.quick-start ul {
-  margin: 1rem 0;
-  padding-left: 1.5rem;
-}
-
-.quick-start li {
-  margin: 0.5rem 0;
-}
-
-.footer {
-  background: #f8f9fa;
-  padding: 1rem;
-  text-align: center;
-  color: #666;
-  margin-top: auto;
-}
-
-.footer p {
+.logo {
+  font-size: 18px;
+  font-weight: 600;
   margin: 0;
+}
+
+.nav {
+  display: flex;
+  gap: 16px;
+}
+
+.nav-link {
+  color: #c9d1d9;
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: background 0.2s;
+  font-size: 14px;
+}
+
+.nav-link:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.breadcrumb {
+  background: #f6f8fa;
+  padding: 0 32px;
+  border-bottom: 1px solid #d0d7de;
+  position: fixed;
+  top: 48px;
+  left: 320px;
+  right: 0;
+  z-index: 99;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  height: 53px;
+  box-sizing: border-box;
+}
+
+.breadcrumb-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.breadcrumb-separator {
+  color: #57606a;
+  margin: 0 4px;
+}
+
+.breadcrumb-link {
+  color: #0969da;
+  text-decoration: none;
+}
+
+.breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+.main-container {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  margin-top: 57px;
+}
+
+.main-container {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  margin-top: 48px;
+}
+
+.sidebar {
+  width: 320px;
+  background: white;
+  border-right: 1px solid #d0d7de;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 48px;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+}
+
+.app:has(.breadcrumb) .sidebar {
+  top: 48px;
+}
+
+.app:has(.breadcrumb) .main-container {
+  margin-top: 101px;
+}
+
+.app:has(.breadcrumb) .content {
+  padding-top: 8px;
+}
+
+.sidebar-header {
+  padding: 0 16px;
+  border-bottom: 1px solid #d0d7de;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 53px;
+  box-sizing: border-box;
+}
+
+.sidebar-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.btn-new {
+  background: #2da44e;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-new:hover {
+  background: #2c974b;
+}
+
+.tree-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  margin-left: 320px;
+  padding: 8px 24px 24px 24px;
+}
+
+.detail-panel {
+  background: white;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.detail-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid #d0d7de;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.detail-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.badge {
+  background: #0969da;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.badge.group {
+  background: #8250df;
+}
+
+.detail-body {
+  padding: 24px;
+}
+
+.info-section {
+  margin-bottom: 24px;
+}
+
+.info-section h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+}
+
+.info-item {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+
+.label {
+  font-weight: 500;
+  color: #57606a;
+  min-width: 80px;
+}
+
+code {
+  background: #f6f8fa;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+}
+
+.stats {
+  display: flex;
+  gap: 24px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  background: #f6f8fa;
+  border-radius: 6px;
+  min-width: 120px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #0969da;
+}
+
+.stat-label {
+  font-size: 14px;
+  color: #57606a;
+  margin-top: 4px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 48px;
+  color: #57606a;
 }
 </style>
