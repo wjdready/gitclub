@@ -77,6 +77,13 @@ pub async fn create_group(
     State(state): State<ApiState>,
     Json(req): Json<CreateGroupRequest>,
 ) -> impl IntoResponse {
+    // 检查路径中的任何部分是否以 .git 结尾
+    for part in req.name.split('/') {
+        if part.ends_with(".git") {
+            return (StatusCode::BAD_REQUEST, "Group path cannot contain segments ending with .git. Use Repository type to create a git repository.").into_response();
+        }
+    }
+
     let path = if let Some(parent) = &req.parent_path {
         format!("{}/{}", parent, req.name)
     } else {
@@ -88,13 +95,30 @@ pub async fn create_group(
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create directory: {}", e)).into_response();
     }
 
+    // 创建 .meta/.meta 文件夹并保存组信息
+    let meta_meta_path = full_path.join(".meta/.meta");
+    if let Err(e) = std::fs::create_dir_all(&meta_meta_path) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create .meta/.meta directory: {}", e)).into_response();
+    }
+
+    // 保存组的元数据到 .meta/.meta/group.json
+    let group_meta = serde_json::json!({
+        "description": req.description,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+    });
+
+    let meta_file = meta_meta_path.join("group.json");
+    if let Err(e) = std::fs::write(&meta_file, serde_json::to_string_pretty(&group_meta).unwrap()) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write metadata: {}", e)).into_response();
+    }
+
     (StatusCode::CREATED, Json(serde_json::json!({ "path": path }))).into_response()
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct CreateRepoRequest {
     pub name: String,
-    pub group_path: String,
+    pub parent_path: Option<String>,
     pub description: Option<String>,
 }
 
@@ -102,13 +126,25 @@ pub async fn create_repo(
     State(state): State<ApiState>,
     Json(req): Json<CreateRepoRequest>,
 ) -> impl IntoResponse {
+    // 检查路径中间部分是否包含 .git
+    for part in req.name.split('/') {
+        if part.ends_with(".git") && part != req.name.split('/').last().unwrap() {
+            return (StatusCode::BAD_REQUEST, "Repository path cannot contain .git in intermediate segments.").into_response();
+        }
+    }
+
     let repo_name = if req.name.ends_with(".git") {
         req.name.clone()
     } else {
         format!("{}.git", req.name)
     };
 
-    let path = format!("{}/{}", req.group_path, repo_name);
+    let path = if let Some(parent) = &req.parent_path {
+        format!("{}/{}", parent, repo_name)
+    } else {
+        repo_name.clone()
+    };
+
     let full_path = state.scanner.repos_path().join(&path);
 
     if let Err(e) = std::fs::create_dir_all(&full_path) {
@@ -123,6 +159,29 @@ pub async fn create_repo(
 
     match output {
         Ok(output) if output.status.success() => {
+            // 在父组的 .meta/<repo_name>/ 下保存仓库信息
+            let parent_path = if let Some(parent) = &req.parent_path {
+                state.scanner.repos_path().join(parent)
+            } else {
+                state.scanner.repos_path().to_path_buf()
+            };
+
+            let repo_meta_path = parent_path.join(".meta").join(&repo_name);
+            if let Err(e) = std::fs::create_dir_all(&repo_meta_path) {
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create .meta/{} directory: {}", repo_name, e)).into_response();
+            }
+
+            // 保存仓库的元数据到父组的 .meta/<repo_name>/repo.json
+            let repo_meta = serde_json::json!({
+                "description": req.description,
+                "created_at": chrono::Utc::now().to_rfc3339(),
+            });
+
+            let meta_file = repo_meta_path.join("repo.json");
+            if let Err(e) = std::fs::write(&meta_file, serde_json::to_string_pretty(&repo_meta).unwrap()) {
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write metadata: {}", e)).into_response();
+            }
+
             (StatusCode::CREATED, Json(serde_json::json!({ "path": path }))).into_response()
         }
         _ => {
@@ -450,6 +509,7 @@ pub struct GroupDetail {
     pub path: String,
     pub total_size: u64,
     pub total_size_str: String,
+    pub description: Option<String>,
     pub repositories: Vec<GroupRepoInfo>,
     pub subgroups: Vec<GroupSubgroupInfo>,
 }
@@ -524,6 +584,11 @@ pub async fn get_group_detail(
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
 
+            // 忽略 .meta 文件夹
+            if name == ".meta" {
+                continue;
+            }
+
             if path.is_dir() {
                 if name.ends_with(".git") {
                     let size = dir_size(&path);
@@ -565,11 +630,25 @@ pub async fn get_group_detail(
 
     let name = group_path.split('/').last().unwrap_or(&group_path).to_string();
 
+    // 从 .meta/.meta/group.json 读取描述
+    let description = {
+        let meta_file = full_path.join(".meta/.meta/group.json");
+        if meta_file.exists() {
+            std::fs::read_to_string(&meta_file)
+                .ok()
+                .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                .and_then(|json| json.get("description").and_then(|v| v.as_str()).map(String::from))
+        } else {
+            None
+        }
+    };
+
     let detail = GroupDetail {
         name,
         path: group_path,
         total_size,
         total_size_str: format_size(total_size),
+        description,
         repositories,
         subgroups,
     };

@@ -21,6 +21,10 @@
                 <span class="label">Disk usage:</span>
                 <span class="size-value">{{ detail.total_size_str }}</span>
               </div>
+              <div v-if="detail.description" class="info-item">
+                <span class="label">Description:</span>
+                <span class="description-value">{{ detail.description }}</span>
+              </div>
             </div>
           </div>
 
@@ -218,6 +222,11 @@ code {
 .size-value {
   font-size: 14px;
   font-weight: 500;
+  color: #24292f;
+}
+
+.description-value {
+  font-size: 14px;
   color: #24292f;
 }
 

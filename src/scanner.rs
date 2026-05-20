@@ -25,6 +25,12 @@ impl RepoScanner {
             for entry in read_dir.flatten() {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
+
+                // 忽略 .meta 文件夹
+                if name == ".meta" {
+                    continue;
+                }
+
                 let current_path = if relative_path.is_empty() {
                     name.clone()
                 } else {

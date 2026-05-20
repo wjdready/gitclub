@@ -26,32 +26,24 @@
 
         <form @submit.prevent="handleSubmit">
           <div class="form-group">
+            <label>Parent Location</label>
+            <input
+              v-model="parentPath"
+              type="text"
+              placeholder="(root) or parent/path"
+            />
+            <div class="hint">Leave empty for root, or specify parent group path</div>
+          </div>
+
+          <div class="form-group">
             <label>Name</label>
             <input
               v-model="name"
               type="text"
-              placeholder="Enter name"
+              placeholder="e.g., myproject or team/subgroup/project"
               required
             />
-          </div>
-
-          <div class="form-group" v-if="type === 'group'">
-            <label>Parent Path (optional)</label>
-            <input
-              v-model="parentPath"
-              type="text"
-              placeholder="e.g., team1/subgroup"
-            />
-          </div>
-
-          <div class="form-group" v-if="type === 'repo'">
-            <label>Group Path</label>
-            <input
-              v-model="groupPath"
-              type="text"
-              placeholder="e.g., team1"
-              required
-            />
+            <div class="hint">Supports paths like "group/subgroup/name" to create nested structure</div>
           </div>
 
           <div class="form-group">
@@ -82,17 +74,27 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+
+const props = defineProps({
+  currentPath: {
+    type: String,
+    default: ''
+  }
+})
 
 const emit = defineEmits(['close', 'created'])
 
 const type = ref('group')
 const name = ref('')
-const parentPath = ref('')
-const groupPath = ref('')
+const parentPath = ref(props.currentPath)
 const description = ref('')
 const loading = ref(false)
 const error = ref('')
+
+const displayPath = computed(() => {
+  return parentPath.value || '(root)'
+})
 
 const handleSubmit = async () => {
   loading.value = true
@@ -100,17 +102,11 @@ const handleSubmit = async () => {
 
   try {
     const endpoint = type.value === 'group' ? '/api/groups' : '/api/repos'
-    const payload = type.value === 'group'
-      ? {
-          name: name.value,
-          parent_path: parentPath.value || null,
-          description: description.value || null
-        }
-      : {
-          name: name.value,
-          group_path: groupPath.value,
-          description: description.value || null
-        }
+    const payload = {
+      name: name.value,
+      parent_path: parentPath.value || null,
+      description: description.value || null
+    }
 
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -249,6 +245,22 @@ const handleSubmit = async () => {
 .form-group textarea:focus {
   outline: none;
   border-color: #0969da;
+}
+
+.location-display {
+  padding: 8px 12px;
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #57606a;
+  font-family: 'Courier New', monospace;
+}
+
+.hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #57606a;
 }
 
 .form-actions {

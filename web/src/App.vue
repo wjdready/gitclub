@@ -97,6 +97,7 @@
 
     <CreateModal
       v-if="showCreateModal"
+      :current-path="getCurrentPath()"
       @close="showCreateModal = false"
       @created="refreshTree"
     />
@@ -287,6 +288,18 @@ const goHome = () => {
   selectedFile.value = null
   expandedPaths.value = new Set()
   expandedFilePaths.value = new Set()
+}
+
+const getCurrentPath = () => {
+  if (!selectedNode.value) return ''
+  // 如果选中的是仓库，返回其父路径（组路径）
+  if (selectedNode.value.is_repo) {
+    const parts = selectedNode.value.path.replace(/\.git$/, '').split('/')
+    parts.pop() // 移除仓库名
+    return parts.join('/')
+  }
+  // 如果选中的是组，返回组路径
+  return selectedNode.value.path
 }
 
 const getBreadcrumbs = () => {
