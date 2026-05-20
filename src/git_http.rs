@@ -1,96 +1,99 @@
 use axum::{
     body::Body,
-    extract::{Path, State, Query},
     response::{IntoResponse, Response},
     http::{StatusCode, header},
 };
 use http_body_util::BodyExt;
 use std::process::Stdio;
+use std::io::Read;
 use tokio::process::Command;
+use tokio_util::io::ReaderStream;
+use flate2::read::GzDecoder;
 use crate::scanner::RepoScanner;
 use std::sync::Arc;
-use serde::Deserialize;
 
 #[derive(Clone)]
 pub struct GitHttpState {
     pub scanner: Arc<RepoScanner>,
 }
 
-#[derive(Deserialize)]
-pub struct InfoRefsQuery {
-    service: String,
-}
-
-pub async fn git_info_refs(
-    Path((group, repo)): Path<(String, String)>,
-    State(state): State<GitHttpState>,
-    Query(query): Query<InfoRefsQuery>,
+pub async fn handle_info_refs(
+    repo_path: &str,
+    state: GitHttpState,
+    service: &str,
 ) -> Response {
-    let service = &query.service;
+    let repo_path = repo_path.trim_start_matches('/');
+    let full_path = state.scanner.repos_path().join(repo_path);
 
-    if !service.starts_with("git-") {
-        return (StatusCode::BAD_REQUEST, "Invalid service").into_response();
-    }
-
-    let repo_path = format!("{}/{}", group, repo);
-    let full_path = state.scanner.repos_path().join(&repo_path);
     if !full_path.exists() {
         return (StatusCode::NOT_FOUND, "Repository not found").into_response();
     }
 
-    let output = Command::new("git")
-        .arg(service)
+    if service != "git-upload-pack" && service != "git-receive-pack" {
+        return (StatusCode::BAD_REQUEST, "Invalid service").into_response();
+    }
+
+    let git_command = service.strip_prefix("git-").unwrap_or(service);
+
+    let output = match Command::new("git")
+        .arg(git_command)
         .arg("--stateless-rpc")
         .arg("--advertise-refs")
         .arg(&full_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .await;
+        .await
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return (StatusCode::INTERNAL_SERVER_ERROR, "Git command failed").into_response(),
+    };
 
-    match output {
-        Ok(output) if output.status.success() => {
-            let mut body = Vec::new();
-            body.extend_from_slice(format!("# service={}\n", service).as_bytes());
-            body.extend_from_slice(b"0000");
-            body.extend_from_slice(&output.stdout);
+    // Format response according to Git HTTP protocol
+    let service_line = format!("# service={}\n", service);
+    let mut response_body = Vec::new();
 
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, format!("application/x-{}-advertisement", service))
-                .header(header::CACHE_CONTROL, "no-cache")
-                .body(Body::from(body))
-                .unwrap()
-        }
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, "Git command failed").into_response(),
-    }
+    // Packet line format: 4-byte hex length + content
+    let pkt_line = format!("{:04x}{}", service_line.len() + 4, service_line);
+    response_body.extend_from_slice(pkt_line.as_bytes());
+    response_body.extend_from_slice(b"0000"); // flush packet
+    response_body.extend_from_slice(&output.stdout);
+
+    let content_type = format!("application/x-{}-advertisement", service);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from(response_body))
+        .unwrap()
 }
 
-pub async fn git_upload_pack(
-    Path((group, repo)): Path<(String, String)>,
-    State(state): State<GitHttpState>,
+pub async fn handle_upload_pack(
+    repo_path: &str,
+    state: GitHttpState,
     body: Body,
 ) -> Response {
-    let repo_path = format!("{}/{}", group, repo);
-    git_rpc(repo_path, state, body, "git-upload-pack").await
+    handle_git_rpc(repo_path, state, body, "upload-pack").await
 }
 
-pub async fn git_receive_pack(
-    Path((group, repo)): Path<(String, String)>,
-    State(state): State<GitHttpState>,
+pub async fn handle_receive_pack(
+    repo_path: &str,
+    state: GitHttpState,
     body: Body,
 ) -> Response {
-    let repo_path = format!("{}/{}", group, repo);
-    git_rpc(repo_path, state, body, "git-receive-pack").await
+    handle_git_rpc(repo_path, state, body, "receive-pack").await
 }
 
-async fn git_rpc(
-    repo_path: String,
+async fn handle_git_rpc(
+    repo_path: &str,
     state: GitHttpState,
     body: Body,
     service: &str,
 ) -> Response {
-    let full_path = state.scanner.repos_path().join(&repo_path);
+    let repo_path = repo_path.trim_start_matches('/');
+    let full_path = state.scanner.repos_path().join(repo_path);
+
     if !full_path.exists() {
         return (StatusCode::NOT_FOUND, "Repository not found").into_response();
     }
@@ -98,6 +101,27 @@ async fn git_rpc(
     let body_bytes = match body.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(_) => return (StatusCode::BAD_REQUEST, "Failed to read request body").into_response(),
+    };
+
+    tracing::debug!("Git {} for repo: {}, body size: {} bytes", service, repo_path, body_bytes.len());
+
+    // Check if body is gzip compressed (starts with 0x1f 0x8b)
+    let decompressed_bytes = if body_bytes.len() >= 2 && body_bytes[0] == 0x1f && body_bytes[1] == 0x8b {
+        tracing::debug!("Body is gzip compressed, decompressing...");
+        let mut decoder = GzDecoder::new(&body_bytes[..]);
+        let mut decompressed = Vec::new();
+        match decoder.read_to_end(&mut decompressed) {
+            Ok(size) => {
+                tracing::debug!("Decompressed {} bytes to {} bytes", body_bytes.len(), size);
+                decompressed
+            }
+            Err(e) => {
+                tracing::error!("Failed to decompress gzip body: {}", e);
+                return (StatusCode::BAD_REQUEST, "Failed to decompress request body").into_response();
+            }
+        }
+    } else {
+        body_bytes.to_vec()
     };
 
     let mut child = match Command::new("git")
@@ -110,27 +134,32 @@ async fn git_rpc(
         .spawn()
     {
         Ok(child) => child,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to spawn git process").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to spawn git").into_response(),
     };
 
+    // Write request body to stdin
     if let Some(mut stdin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
-        let _ = stdin.write_all(&body_bytes).await;
+        if let Err(_) = stdin.write_all(&decompressed_bytes).await {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to write to git").into_response();
+        }
+        drop(stdin);
     }
 
-    let output = match child.wait_with_output().await {
-        Ok(output) => output,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Git command failed").into_response(),
-    };
+    // Stream the response
+    if let Some(stdout) = child.stdout.take() {
+        let stream = ReaderStream::new(stdout);
+        let body = Body::from_stream(stream);
 
-    if output.status.success() {
+        let content_type = format!("application/x-git-{}-result", service);
+
         Response::builder()
             .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, format!("application/x-{}-result", service))
+            .header(header::CONTENT_TYPE, content_type)
             .header(header::CACHE_CONTROL, "no-cache")
-            .body(Body::from(output.stdout))
+            .body(body)
             .unwrap()
     } else {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Git command failed").into_response()
+        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to get git output").into_response()
     }
 }

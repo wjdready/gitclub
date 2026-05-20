@@ -10,7 +10,9 @@ use axum::{
     Router,
     Json,
     response::{IntoResponse, Response},
-    http::{StatusCode, header, Uri},
+    http::{StatusCode, header, Uri, Request, Method},
+    extract::State,
+    body::Body,
 };
 use config::Config;
 use assets::Assets;
@@ -71,11 +73,8 @@ async fn main() {
         .route("/api/repo-file/*path", get(api::get_file_content))
         .route("/api/group/*path", get(api::get_group_detail))
         .with_state(api_state)
-        .route("/:group/:repo/info/refs", get(git_http::git_info_refs))
-        .route("/:group/:repo/git-upload-pack", post(git_http::git_upload_pack))
-        .route("/:group/:repo/git-receive-pack", post(git_http::git_receive_pack))
+        .fallback(git_or_static_handler)
         .with_state(git_state)
-        .fallback(static_handler)
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from((
@@ -98,6 +97,41 @@ async fn main() {
     };
 
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn git_or_static_handler(
+    State(git_state): State<git_http::GitHttpState>,
+    req: Request<Body>,
+) -> Response {
+    let uri = req.uri().clone();
+    let path = uri.path();
+    let method = req.method().clone();
+
+    // Decode URL-encoded path to support non-ASCII characters (e.g., Chinese)
+    let decoded_path = urlencoding::decode(path).unwrap_or_else(|_| path.into()).to_string();
+
+    // Check if this is a git request
+    if decoded_path.ends_with("/info/refs") {
+        let query = uri.query().and_then(|q| {
+            q.split('&')
+                .find(|p| p.starts_with("service="))
+                .and_then(|p| p.strip_prefix("service="))
+        });
+
+        if let Some(service) = query {
+            let repo_path = decoded_path.strip_suffix("/info/refs").unwrap_or(&decoded_path);
+            return git_http::handle_info_refs(repo_path, git_state, service).await;
+        }
+    } else if decoded_path.ends_with("/git-upload-pack") && method == Method::POST {
+        let repo_path = decoded_path.strip_suffix("/git-upload-pack").unwrap_or(&decoded_path);
+        return git_http::handle_upload_pack(repo_path, git_state, req.into_body()).await;
+    } else if decoded_path.ends_with("/git-receive-pack") && method == Method::POST {
+        let repo_path = decoded_path.strip_suffix("/git-receive-pack").unwrap_or(&decoded_path);
+        return git_http::handle_receive_pack(repo_path, git_state, req.into_body()).await;
+    }
+
+    // Otherwise serve static files
+    static_handler(uri).await
 }
 
 async fn static_handler(uri: Uri) -> Response {
