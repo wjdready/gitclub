@@ -30,13 +30,13 @@ impl Config {
 
         let server_addr = ini_data
             .get_from(Some("server"), "addr")
-            .unwrap_or("127.0.0.1")
+            .unwrap_or("0.0.0.0")
             .to_string();
 
         let server_port: u16 = ini_data
             .get_from(Some("server"), "port")
             .and_then(|s: &str| s.parse().ok())
-            .unwrap_or(8080);
+            .unwrap_or(3000);
 
         let data_path = ini_data
             .get_from(Some("paths"), "data")
@@ -64,8 +64,8 @@ impl Config {
 
     fn default_config(exe_dir: &Path) -> Self {
         Self {
-            server_addr: "127.0.0.1".to_string(),
-            server_port: 8080,
+            server_addr: "0.0.0.0".to_string(),
+            server_port: 3000,
             data_path: exe_dir.join("data"),
             log_path: exe_dir.join("log"),
             repos_path: exe_dir.join("repos"),
