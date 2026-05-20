@@ -25,12 +25,46 @@ pub async fn handle_info_refs(
     let repo_path = repo_path.trim_start_matches('/');
     let full_path = state.scanner.repos_path().join(repo_path);
 
-    if !full_path.exists() {
-        return (StatusCode::NOT_FOUND, "Repository not found").into_response();
-    }
-
     if service != "git-upload-pack" && service != "git-receive-pack" {
         return (StatusCode::BAD_REQUEST, "Invalid service").into_response();
+    }
+
+    // 如果是 git-receive-pack (push) 且仓库不存在，则自动创建
+    if !full_path.exists() {
+        if service == "git-receive-pack" {
+            tracing::info!("Creating repository on push (info/refs): {}", repo_path);
+
+            // 创建父目录
+            if let Some(parent) = full_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    tracing::error!("Failed to create parent directories: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create repository directories").into_response();
+                }
+            }
+
+            // 初始化裸仓库
+            let init_output = match Command::new("git")
+                .arg("init")
+                .arg("--bare")
+                .arg(&full_path)
+                .output()
+                .await
+            {
+                Ok(output) if output.status.success() => output,
+                Ok(output) => {
+                    tracing::error!("Git init failed: {}", String::from_utf8_lossy(&output.stderr));
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to initialize repository").into_response();
+                }
+                Err(e) => {
+                    tracing::error!("Failed to run git init: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to initialize repository").into_response();
+                }
+            };
+
+            tracing::info!("Repository created successfully: {}", repo_path);
+        } else {
+            return (StatusCode::NOT_FOUND, "Repository not found").into_response();
+        }
     }
 
     let git_command = service.strip_prefix("git-").unwrap_or(service);
@@ -94,8 +128,42 @@ async fn handle_git_rpc(
     let repo_path = repo_path.trim_start_matches('/');
     let full_path = state.scanner.repos_path().join(repo_path);
 
+    // 如果是 receive-pack (push) 且仓库不存在，则自动创建
     if !full_path.exists() {
-        return (StatusCode::NOT_FOUND, "Repository not found").into_response();
+        if service == "receive-pack" {
+            tracing::info!("Creating repository on push: {}", repo_path);
+
+            // 创建父目录
+            if let Some(parent) = full_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    tracing::error!("Failed to create parent directories: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create repository directories").into_response();
+                }
+            }
+
+            // 初始化裸仓库
+            let init_output = match Command::new("git")
+                .arg("init")
+                .arg("--bare")
+                .arg(&full_path)
+                .output()
+                .await
+            {
+                Ok(output) if output.status.success() => output,
+                Ok(output) => {
+                    tracing::error!("Git init failed: {}", String::from_utf8_lossy(&output.stderr));
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to initialize repository").into_response();
+                }
+                Err(e) => {
+                    tracing::error!("Failed to run git init: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to initialize repository").into_response();
+                }
+            };
+
+            tracing::info!("Repository created successfully: {}", repo_path);
+        } else {
+            return (StatusCode::NOT_FOUND, "Repository not found").into_response();
+        }
     }
 
     let body_bytes = match body.collect().await {
