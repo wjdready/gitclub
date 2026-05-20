@@ -10,7 +10,6 @@
         <button v-if="isMarkdown" class="toggle-btn" @click="showSource = !showSource">
           {{ showSource ? 'Preview' : 'Source' }}
         </button>
-        <button class="back-btn" @click="$emit('back')">← Back to Files</button>
       </div>
     </div>
     <div v-if="loading" class="loading">Loading...</div>

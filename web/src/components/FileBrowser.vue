@@ -1,9 +1,7 @@
 <template>
   <div class="file-browser">
     <div class="browser-header">
-      <button @click="$emit('back')" class="back-button">
-        ← Back to Tree
-      </button>
+      <!-- Reserved for future buttons -->
     </div>
     <div v-if="loading" class="loading">Loading...</div>
     <div v-else class="file-tree">

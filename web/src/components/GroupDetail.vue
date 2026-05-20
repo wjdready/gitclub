@@ -131,6 +131,7 @@ watch(() => props.groupPath, () => {
 <style scoped>
 .group-detail {
   background: transparent;
+  min-height: 100%;
 }
 
 .loading,

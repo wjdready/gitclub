@@ -25,7 +25,7 @@
 
     <div class="main-container">
       <aside class="sidebar">
-        <div v-if="viewMode === 'tree'">
+        <div v-if="viewMode === 'tree'" class="tree-view-container">
           <div class="sidebar-header">
             <h2>Groups & Repositories</h2>
             <button class="btn-new" @click="showCreateModal = true">New</button>
@@ -385,7 +385,8 @@ function syncUrl() {
   } else if (selectedNode.value) {
     path = '/' + cleanRepoPath
   }
-  const url = path || '/'
+  // 对路径中的每个部分进行编码，但保留斜杠
+  const url = path ? path.split('/').map(segment => encodeURIComponent(segment)).join('/') : '/'
   window.history.replaceState(null, '', url)
 }
 
@@ -405,7 +406,9 @@ function resolveRoute() {
   if (!pathname) return
   console.log('Resolving route:', pathname)
 
-  const segments = pathname.split('/').filter(Boolean)
+  // 解码 URL 中的中文字符
+  const decodedPathname = decodeURIComponent(pathname)
+  const segments = decodedPathname.split('/').filter(Boolean)
   console.log('Segments:', segments)
 
   // 尝试从长到短匹配仓库路径（仓库路径可能包含斜杠）
@@ -509,10 +512,11 @@ onMounted(async () => {
 
 <style scoped>
 .app {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   background: #f6f8fa;
+  overflow: hidden;
 }
 
 .header {
@@ -607,15 +611,8 @@ onMounted(async () => {
 .main-container {
   display: flex;
   flex: 1;
-  overflow: hidden;
-  margin-top: 57px;
-}
-
-.main-container {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
   margin-top: 48px;
+  min-height: 0;
 }
 
 .sidebar {
@@ -629,6 +626,7 @@ onMounted(async () => {
   bottom: 0;
   left: 0;
   z-index: 50;
+  overflow: hidden;
 }
 
 .resize-handle {
@@ -655,7 +653,7 @@ onMounted(async () => {
 }
 
 .app:has(.breadcrumb) .content {
-  padding-top: 8px;
+  top: 101px;
 }
 
 .sidebar-header {
@@ -693,6 +691,14 @@ onMounted(async () => {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
+  min-height: 0;
+}
+
+.tree-view-container {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .file-browser-container {
@@ -703,9 +709,12 @@ onMounted(async () => {
 }
 
 .content {
-  flex: 1;
+  position: fixed;
+  top: 48px;
+  bottom: 0;
+  left: var(--sidebar-width, 320px);
+  right: 0;
   overflow-y: auto;
-  margin-left: var(--sidebar-width, 320px);
   padding: 8px 24px 24px 24px;
 }
 
