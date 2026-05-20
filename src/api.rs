@@ -348,6 +348,26 @@ fn get_file_last_commit(repo_path: &std::path::Path, branch: &str, file_path: &s
     }
 }
 
+fn get_repo_last_commit(repo_path: &std::path::Path, branch: &str) -> (Option<String>, Option<String>) {
+    let output = Command::new("git")
+        .args(&["log", "-1", "--format=%s|%ar", branch])
+        .current_dir(repo_path)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let result = String::from_utf8_lossy(&output.stdout);
+            let parts: Vec<&str> = result.trim().split('|').collect();
+            if parts.len() == 2 {
+                (Some(parts[0].to_string()), Some(parts[1].to_string()))
+            } else {
+                (None, None)
+            }
+        }
+        _ => (None, None)
+    }
+}
+
 fn get_readme_content(repo_path: &std::path::Path, branch: &str) -> Option<String> {
     for readme_name in &["README.md", "README", "readme.md", "Readme.md"] {
         let output = Command::new("git")
@@ -441,12 +461,16 @@ pub struct GroupRepoInfo {
     pub size: u64,
     pub size_str: String,
     pub default_branch: Option<String>,
+    pub last_commit_message: Option<String>,
+    pub last_commit_date: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct GroupSubgroupInfo {
     pub name: String,
     pub path: String,
+    pub size: u64,
+    pub size_str: String,
 }
 
 fn dir_size(path: &Path) -> u64 {
@@ -494,7 +518,6 @@ pub async fn get_group_detail(
 
     let mut repositories = Vec::new();
     let mut subgroups = Vec::new();
-    let mut total_size = 0u64;
 
     if let Ok(entries) = fs::read_dir(&full_path) {
         for entry in entries.flatten() {
@@ -505,23 +528,36 @@ pub async fn get_group_detail(
                 if name.ends_with(".git") {
                     let size = dir_size(&path);
                     let default_branch = get_default_branch(&path);
-                    total_size += size;
+                    let (last_commit_message, last_commit_date) = if let Some(ref branch) = default_branch {
+                        get_repo_last_commit(&path, branch)
+                    } else {
+                        (None, None)
+                    };
                     repositories.push(GroupRepoInfo {
                         name: name.trim_end_matches(".git").to_string(),
                         path: format!("{}/{}", group_path, name),
                         size,
                         size_str: format_size(size),
                         default_branch,
+                        last_commit_message,
+                        last_commit_date,
                     });
                 } else {
+                    let size = dir_size(&path);
+                    let sub_path = format!("{}/{}", group_path, name);
                     subgroups.push(GroupSubgroupInfo {
                         name,
-                        path: format!("{}/{}", group_path, name),
+                        path: sub_path,
+                        size,
+                        size_str: format_size(size),
                     });
                 }
             }
         }
     }
+
+    // total_size = actual disk usage of the whole group directory
+    let total_size = dir_size(&full_path);
 
     // Sort: repositories by name, subgroups by name
     repositories.sort_by(|a, b| a.name.cmp(&b.name));

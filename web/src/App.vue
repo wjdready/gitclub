@@ -79,36 +79,12 @@
           @file-selected="handleFileSelected"
         />
 
-        <div v-else-if="selectedNode && !selectedNode.is_repo" class="detail-panel">
-          <div class="detail-header">
-            <h2>{{ selectedNode.name }}</h2>
-            <span class="badge group">Group</span>
-          </div>
-
-          <div class="detail-body">
-            <div class="info-section">
-              <h3>Information</h3>
-              <div class="info-item">
-                <span class="label">Path:</span>
-                <code>{{ selectedNode.path }}</code>
-              </div>
-            </div>
-
-            <div class="info-section">
-              <h3>Group Statistics</h3>
-              <div class="stats">
-                <div class="stat-item">
-                  <span class="stat-value">{{ countRepositories(selectedNode) }}</span>
-                  <span class="stat-label">Repositories</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-value">{{ countSubgroups(selectedNode) }}</span>
-                  <span class="stat-label">Subgroups</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <GroupDetail
+          v-else-if="selectedNode && !selectedNode.is_repo"
+          :group-path="selectedNode.path"
+          @select-group="handleSelectGroup"
+          @select-repo="handleSelectRepo"
+        />
 
         <div v-else-if="!initialRouteResolved" class="empty-state">
           <p>Loading...</p>
@@ -132,6 +108,7 @@ import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import TreeNode from './components/TreeNode.vue'
 import CreateModal from './components/CreateModal.vue'
 import RepoDetail from './components/RepoDetail.vue'
+import GroupDetail from './components/GroupDetail.vue'
 import FileBrowser from './components/FileBrowser.vue'
 import FileViewer from './components/FileViewer.vue'
 
@@ -273,29 +250,27 @@ const handleFileSelected = (file) => {
   scrollSelectedIntoView()
 }
 
-const countRepositories = (node) => {
-  let count = 0
-  const traverse = (n) => {
-    if (n.is_repo) {
-      count++
-    } else {
-      n.children?.forEach(traverse)
+const handleSelectRepo = (path) => {
+  const targetNode = findNodeByPath(tree.value, path)
+  if (targetNode) {
+    selectNode(targetNode)
+    const parts = path.replace(/\.git$/, '').split('/')
+    for (let p = 1; p < parts.length; p++) {
+      expandedPaths.value.add(parts.slice(0, p).join('/'))
     }
   }
-  traverse(node)
-  return count
 }
 
-const countSubgroups = (node) => {
-  let count = 0
-  const traverse = (n) => {
-    if (!n.is_repo && n !== node) {
-      count++
+const handleSelectGroup = (path) => {
+  const targetNode = findNodeByPath(tree.value, path)
+  if (targetNode) {
+    selectNode(targetNode)
+    // 展开祖先路径
+    const parts = path.split('/')
+    for (let p = 1; p < parts.length; p++) {
+      expandedPaths.value.add(parts.slice(0, p).join('/'))
     }
-    n.children?.forEach(traverse)
   }
-  node.children?.forEach(traverse)
-  return count
 }
 
 const refreshTree = () => {
