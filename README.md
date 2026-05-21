@@ -4,6 +4,8 @@ A lightweight, self-hosted Git server built with Rust and Vue.js. Simple, fast, 
 
 ## ✨ Features
 
+![1779328246358](doc/images/Readme/1779328246358.png)
+
 - 🔐 **User Authentication** - Secure login and registration with JWT
 - 📁 **Hierarchical Organization** - Groups and repositories with nested structure
 - 👥 **Team Collaboration** - Fine-grained member permissions and access control
