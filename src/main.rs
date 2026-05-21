@@ -4,9 +4,10 @@ mod db;
 mod scanner;
 mod api;
 mod git_http;
+mod auth;
 
 use axum::{
-    routing::{get, post},
+    routing::{get, post, delete},
     Router,
     Json,
     response::{IntoResponse, Response},
@@ -52,6 +53,26 @@ async fn main() {
     let db = Database::new(&db_path).await.expect("Failed to initialize database");
     tracing::info!("Database initialized at {:?}", db_path);
 
+    // 初始化管理员账户
+    let admin_exists = db.get_user_by_username(&config.admin_username).await.ok().flatten();
+    if admin_exists.is_none() {
+        tracing::info!("Creating admin user: {}", config.admin_username);
+        let password_hash = auth::hash_password(&config.admin_password)
+            .expect("Failed to hash admin password");
+
+        let admin_id = db.create_user(&config.admin_username, &password_hash, None, true)
+            .await
+            .expect("Failed to create admin user");
+
+        // 创建管理员的 repos 文件夹
+        let admin_folder = config.repos_path.join(&config.admin_username);
+        std::fs::create_dir_all(&admin_folder).ok();
+
+        tracing::info!("Admin user created with ID: {}", admin_id);
+    } else {
+        tracing::info!("Admin user already exists");
+    }
+
     let scanner = Arc::new(RepoScanner::new(config.repos_path.clone()));
 
     let api_state = ApiState {
@@ -66,12 +87,22 @@ async fn main() {
     let app = Router::new()
         .route("/api/health", get(health_check))
         .route("/api/info", get(get_info))
+        .route("/api/auth/login", post(api::login))
+        .route("/api/auth/register", post(api::register))
+        .route("/api/auth/logout", post(api::logout))
+        .route("/api/auth/me", get(api::get_current_user))
+        .route("/api/user/profile", axum::routing::put(api::update_profile))
         .route("/api/tree", get(api::get_tree))
         .route("/api/groups", post(api::create_group))
         .route("/api/repos", post(api::create_repo))
         .route("/api/repo/*path", get(api::get_repo_detail))
         .route("/api/repo-file/*path", get(api::get_file_content))
         .route("/api/group/*path", get(api::get_group_detail))
+        .route("/api/group-members", get(api::list_group_members_handler).post(api::add_group_member_handler))
+        .route("/api/group-members/remove", delete(api::remove_group_member_handler))
+        .route("/api/group-members/permissions", axum::routing::put(api::update_group_member_permissions_handler))
+        .route("/api/repo-members", get(api::list_repo_members_handler).post(api::add_repo_member_handler))
+        .route("/api/repo-members/remove", axum::routing::delete(api::remove_repo_member_handler))
         .with_state(api_state)
         .fallback(git_or_static_handler)
         .with_state(git_state)

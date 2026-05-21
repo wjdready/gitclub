@@ -1,12 +1,31 @@
 <template>
-  <div class="app" :style="{ '--sidebar-width': sidebarWidth + 'px' }">
+  <!-- 登录/注册页面 -->
+  <Login
+    v-if="!isAuthenticated && authView === 'login'"
+    @login-success="handleLoginSuccess"
+    @switch-to-register="authView = 'register'"
+  />
+  <Register
+    v-else-if="!isAuthenticated && authView === 'register'"
+    @register-success="handleRegisterSuccess"
+    @switch-to-login="authView = 'login'"
+  />
+
+  <!-- 主应用界面 -->
+  <div v-else class="app" :style="{ '--sidebar-width': sidebarWidth + 'px' }">
     <header class="header">
       <div class="header-content">
         <h1 class="logo">GitClub</h1>
         <nav class="nav">
-          <a href="#" class="nav-link" :class="{ active: !selectedNode }" @click.prevent="goHome">Repositories</a>
-          <a href="#" class="nav-link" :class="{ active: !selectedNode }" @click.prevent="goHome">Groups</a>
+          <a href="#" class="nav-link" :class="{ active: !selectedNode && currentView === 'main' }" @click.prevent="goHome">Repositories</a>
+          <a href="#" class="nav-link" :class="{ active: !selectedNode && currentView === 'main' }" @click.prevent="goHome">Groups</a>
         </nav>
+        <div class="user-menu">
+          <button class="btn-profile" @click="showProfile">
+            <span class="username">{{ currentUser?.username }}</span>
+          </button>
+          <button class="btn-logout" @click="handleLogout">Logout</button>
+        </div>
       </div>
     </header>
 
@@ -24,7 +43,7 @@
     </div>
 
     <div class="main-container">
-      <aside class="sidebar">
+      <aside class="sidebar" v-if="currentView === 'main'">
         <div v-if="viewMode === 'tree'" class="tree-view-container">
           <div class="sidebar-header">
             <h2>Groups & Repositories</h2>
@@ -63,8 +82,13 @@
       </aside>
 
       <main class="content">
+        <UserProfile
+          v-if="currentView === 'profile'"
+          :user="currentUser"
+          @profile-updated="handleProfileUpdated"
+        />
         <FileViewer
-          v-if="selectedFile && selectedNode && selectedNode.is_repo"
+          v-else-if="selectedFile && selectedNode && selectedNode.is_repo"
           :repo-path="selectedNode.path"
           :file-path="selectedFile"
           :branch="currentBranch"
@@ -82,8 +106,10 @@
         <GroupDetail
           v-else-if="selectedNode && !selectedNode.is_repo"
           :group-path="selectedNode.path"
+          :current-user="currentUser"
           @select-group="handleSelectGroup"
           @select-repo="handleSelectRepo"
+          @refresh-tree="refreshTree"
         />
 
         <div v-else-if="!initialRouteResolved" class="empty-state">
@@ -112,6 +138,15 @@ import RepoDetail from './components/RepoDetail.vue'
 import GroupDetail from './components/GroupDetail.vue'
 import FileBrowser from './components/FileBrowser.vue'
 import FileViewer from './components/FileViewer.vue'
+import Login from './components/Login.vue'
+import Register from './components/Register.vue'
+import UserProfile from './components/UserProfile.vue'
+
+// 认证状态
+const isAuthenticated = ref(false)
+const currentUser = ref(null)
+const authView = ref('login') // 'login' or 'register'
+const currentView = ref('main') // 'main' or 'profile'
 
 const tree = ref([])
 const selectedPath = ref('')
@@ -279,6 +314,7 @@ const refreshTree = () => {
 }
 
 const goHome = () => {
+  currentView.value = 'main'
   selectedNode.value = null
   selectedPath.value = ''
   viewMode.value = 'tree'
@@ -288,6 +324,17 @@ const goHome = () => {
   selectedFile.value = null
   expandedPaths.value = new Set()
   expandedFilePaths.value = new Set()
+}
+
+const showProfile = () => {
+  currentView.value = 'profile'
+  selectedNode.value = null
+  selectedPath.value = ''
+  viewMode.value = 'tree'
+}
+
+const handleProfileUpdated = (updatedUser) => {
+  currentUser.value = updatedUser
 }
 
 const getCurrentPath = () => {
@@ -488,6 +535,50 @@ function resolveRoute() {
   console.log('No matching route found for:', pathname)
 }
 
+// 认证相关函数
+const checkAuth = async () => {
+  try {
+    // 尝试获取当前用户信息（通过 cookie 验证）
+    const response = await fetch('/api/auth/me')
+    if (response.ok) {
+      const data = await response.json()
+      if (data.success && data.user) {
+        isAuthenticated.value = true
+        currentUser.value = data.user
+        return true
+      }
+    }
+  } catch (err) {
+    console.error('Auth check failed:', err)
+  }
+  isAuthenticated.value = false
+  currentUser.value = null
+  return false
+}
+
+const handleLoginSuccess = (user) => {
+  isAuthenticated.value = true
+  currentUser.value = user
+  loadTree()
+  resolveRoute()
+}
+
+const handleRegisterSuccess = (user) => {
+  // 注册成功后切换到登录页面
+  authView.value = 'login'
+}
+
+const handleLogout = async () => {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' })
+  } catch (err) {
+    console.error('Logout failed:', err)
+  }
+  isAuthenticated.value = false
+  currentUser.value = null
+  goHome()
+}
+
 watch(
   [viewMode, selectedFile, currentFilePath, currentBranch, selectedNode],
   () => nextTick(syncUrl),
@@ -504,9 +595,13 @@ watch(tree, (newTree) => {
 })
 
 onMounted(async () => {
-  await loadTree()
-  resolveRoute()
-  initialRouteResolved.value = true
+  // 先检查认证状态
+  const authenticated = await checkAuth()
+  if (authenticated) {
+    await loadTree()
+    resolveRoute()
+    initialRouteResolved.value = true
+  }
 })
 </script>
 
@@ -544,6 +639,57 @@ onMounted(async () => {
   font-size: 18px;
   font-weight: 600;
   margin: 0;
+}
+
+.nav {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+}
+
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.btn-profile {
+  background: transparent;
+  color: #c9d1d9;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-profile:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.username {
+  color: #c9d1d9;
+  font-size: 14px;
+}
+
+.btn-logout {
+  background: rgba(255, 255, 255, 0.1);
+  color: #c9d1d9;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-logout:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .nav {
@@ -716,6 +862,15 @@ onMounted(async () => {
   right: 0;
   overflow-y: auto;
   padding: 8px 24px 24px 24px;
+}
+
+.app:has(.sidebar:not(:empty)) .content {
+  left: var(--sidebar-width, 320px);
+}
+
+.app:not(:has(.sidebar)) .content,
+.app:has(.sidebar:empty) .content {
+  left: 0;
 }
 
 .detail-panel {

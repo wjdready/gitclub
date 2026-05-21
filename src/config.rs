@@ -9,6 +9,9 @@ pub struct Config {
     pub data_path: PathBuf,
     pub log_path: PathBuf,
     pub repos_path: PathBuf,
+    pub admin_username: String,
+    pub admin_password: String,
+    pub jwt_secret: String,
 }
 
 impl Config {
@@ -53,12 +56,30 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|| exe_dir.join("repos"));
 
+        let admin_username = ini_data
+            .get_from(Some("admin"), "username")
+            .unwrap_or("admin")
+            .to_string();
+
+        let admin_password = ini_data
+            .get_from(Some("admin"), "password")
+            .unwrap_or("admin123456")
+            .to_string();
+
+        let jwt_secret = ini_data
+            .get_from(Some("security"), "jwt_secret")
+            .unwrap_or("change-this-secret-key-in-production")
+            .to_string();
+
         Self {
             server_addr,
             server_port,
             data_path,
             log_path,
             repos_path,
+            admin_username,
+            admin_password,
+            jwt_secret,
         }
     }
 
@@ -69,6 +90,9 @@ impl Config {
             data_path: exe_dir.join("data"),
             log_path: exe_dir.join("log"),
             repos_path: exe_dir.join("repos"),
+            admin_username: "admin".to_string(),
+            admin_password: "admin123456".to_string(),
+            jwt_secret: "change-this-secret-key-in-production".to_string(),
         }
     }
 
@@ -86,6 +110,13 @@ impl Config {
             .set("data", self.data_path.to_string_lossy().as_ref())
             .set("log", self.log_path.to_string_lossy().as_ref())
             .set("repos", self.repos_path.to_string_lossy().as_ref());
+
+        ini_data.with_section(Some("admin"))
+            .set("username", &self.admin_username)
+            .set("password", &self.admin_password);
+
+        ini_data.with_section(Some("security"))
+            .set("jwt_secret", &self.jwt_secret);
 
         ini_data.write_to_file(path).ok();
     }

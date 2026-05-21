@@ -43,7 +43,7 @@ pub async fn handle_info_refs(
             }
 
             // 初始化裸仓库
-            let init_output = match Command::new("git")
+            let _init_output = match Command::new("git")
                 .arg("init")
                 .arg("--bare")
                 .arg(&full_path)
@@ -142,7 +142,7 @@ async fn handle_git_rpc(
             }
 
             // 初始化裸仓库
-            let init_output = match Command::new("git")
+            let _init_output = match Command::new("git")
                 .arg("init")
                 .arg("--bare")
                 .arg(&full_path)

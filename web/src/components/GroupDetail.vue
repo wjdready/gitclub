@@ -4,78 +4,92 @@
     <div v-else-if="error" class="error">{{ error }}</div>
     <div v-else-if="detail">
       <div class="group-content">
-        <div class="main-content">
-          <div class="detail-header">
-            <h2>{{ detail.name }}</h2>
-            <span class="badge group">Group</span>
-          </div>
-
-          <div class="info-section">
-            <h3>Information</h3>
-            <div class="info-grid">
-              <div class="info-item">
-                <span class="label">Path:</span>
-                <code>{{ detail.path }}</code>
-              </div>
-              <div class="info-item">
-                <span class="label">Disk usage:</span>
-                <span class="size-value">{{ detail.total_size_str }}</span>
-              </div>
-              <div v-if="detail.description" class="info-item">
-                <span class="label">Description:</span>
-                <span class="description-value">{{ detail.description }}</span>
-              </div>
+        <div class="content-layout">
+          <div class="main-content">
+            <div class="detail-header">
+              <h2>{{ detail.name }}</h2>
+              <span class="badge group">Group</span>
             </div>
-          </div>
 
-          <div v-if="detail.repositories.length > 0 || detail.subgroups.length > 0" class="items-section">
-            <h3>Contents ({{ detail.subgroups.length + detail.repositories.length }})</h3>
-            <div class="items-table">
-              <div class="items-header">
-                <div class="header-col col-name">Name</div>
-                <div class="header-col col-branch">Default branch</div>
-                <div class="header-col col-message">Last commit</div>
-                <div class="header-col col-date">Time</div>
-                <div class="header-col col-size">Size</div>
-              </div>
-              <div class="items-list">
-                <div
-                  v-for="sub in detail.subgroups"
-                  :key="sub.path"
-                  class="item"
-                  @click="selectSubgroup(sub)"
-                >
-                  <div class="item-info">
-                    <span class="item-icon">📁</span>
-                    <span class="item-name">{{ sub.name }}</span>
-                  </div>
-                  <div class="item-branch"></div>
-                  <div class="item-message"></div>
-                  <div class="item-date"></div>
-                  <div class="item-size">{{ sub.size_str }}</div>
+            <div class="info-section">
+              <h3>Information</h3>
+              <div class="info-grid">
+                <div class="info-item">
+                  <span class="label">Path:</span>
+                  <code>{{ detail.path }}</code>
                 </div>
-                <div
-                  v-for="repo in detail.repositories"
-                  :key="repo.path"
-                  class="item"
-                  @click="selectRepo(repo)"
-                >
-                  <div class="item-info">
-                    <span class="item-icon">📦</span>
-                    <span class="item-name">{{ repo.name }}</span>
-                  </div>
-                  <div class="item-branch">{{ repo.default_branch || '' }}</div>
-                  <div class="item-message">{{ repo.last_commit_message || '' }}</div>
-                  <div class="item-date">{{ repo.last_commit_date || '' }}</div>
-                  <div class="item-size">{{ repo.size_str }}</div>
+                <div class="info-item">
+                  <span class="label">Disk usage:</span>
+                  <span class="size-value">{{ detail.total_size_str }}</span>
+                </div>
+                <div v-if="detail.description" class="info-item">
+                  <span class="label">Description:</span>
+                  <span class="description-value">{{ detail.description }}</span>
                 </div>
               </div>
             </div>
+
+            <div v-if="detail.repositories.length > 0 || detail.subgroups.length > 0" class="items-section">
+              <h3>Contents ({{ detail.subgroups.length + detail.repositories.length }})</h3>
+              <div class="items-table">
+                <div class="items-header">
+                  <div class="header-col col-name">Name</div>
+                  <div class="header-col col-branch">Default branch</div>
+                  <div class="header-col col-message">Last commit</div>
+                  <div class="header-col col-date">Time</div>
+                  <div class="header-col col-size">Size</div>
+                </div>
+                <div class="items-list">
+                  <div
+                    v-for="sub in detail.subgroups"
+                    :key="sub.path"
+                    class="item"
+                    @click="selectSubgroup(sub)"
+                  >
+                    <div class="item-info">
+                      <span class="item-icon">📁</span>
+                      <span class="item-name">{{ sub.name }}</span>
+                    </div>
+                    <div class="item-branch"></div>
+                    <div class="item-message"></div>
+                    <div class="item-date"></div>
+                    <div class="item-size">{{ sub.size_str }}</div>
+                  </div>
+                  <div
+                    v-for="repo in detail.repositories"
+                    :key="repo.path"
+                    class="item"
+                    @click="selectRepo(repo)"
+                  >
+                    <div class="item-info">
+                      <span class="item-icon">📦</span>
+                      <span class="item-name">{{ repo.name }}</span>
+                    </div>
+                    <div class="item-branch">{{ repo.default_branch || '' }}</div>
+                    <div class="item-message">{{ repo.last_commit_message || '' }}</div>
+                    <div class="item-date">{{ repo.last_commit_date || '' }}</div>
+                    <div class="item-size">{{ repo.size_str }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-else class="empty">
+              This group is empty
+            </div>
           </div>
 
-          <div v-else class="empty">
-            This group is empty
-          </div>
+          <aside class="sidebar-right">
+            <MemberManagement
+              :owner="detail.owner"
+              :members="detail.members"
+              :resource-path="detail.path"
+              resource-type="group"
+              :can-manage="canManageMembers"
+              @member-added="handleMemberChanged"
+              @member-removed="handleMemberChanged"
+            />
+          </aside>
         </div>
       </div>
     </div>
@@ -83,20 +97,31 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
+import MemberManagement from './MemberManagement.vue'
 
 const props = defineProps({
   groupPath: {
     type: String,
     required: true
-  }
+  },
+  currentUser: Object,
 })
 
-const emit = defineEmits(['select-group', 'select-repo'])
+const emit = defineEmits(['select-group', 'select-repo', 'refresh-tree'])
 
 const detail = ref(null)
 const loading = ref(false)
 const error = ref('')
+
+const canManageMembers = computed(() => {
+  if (!props.currentUser) return false
+  // 管理员总是可以管理
+  if (props.currentUser.is_admin) return true
+  // 如果有所有者，检查是否是所有者
+  if (detail.value && detail.value.owner && detail.value.owner.user_id === props.currentUser.id) return true
+  return false
+})
 
 const loadDetail = async () => {
   loading.value = true
@@ -113,6 +138,11 @@ const loadDetail = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const handleMemberChanged = () => {
+  loadDetail()
+  emit('refresh-tree')
 }
 
 const selectSubgroup = (sub) => {
@@ -148,13 +178,23 @@ watch(() => props.groupPath, () => {
 
 .group-content {
   padding: 8px 24px 24px 24px;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
+}
+
+.content-layout {
+  display: flex;
+  gap: 24px;
 }
 
 .main-content {
   flex: 1;
   min-width: 0;
+}
+
+.sidebar-right {
+  width: 320px;
+  flex-shrink: 0;
 }
 
 .detail-header {
@@ -231,21 +271,16 @@ code {
   color: #24292f;
 }
 
-.repos-section,
-.subgroups-section,
 .items-section {
   margin-bottom: 24px;
 }
 
-.repos-section h3,
-.subgroups-section h3,
 .items-section h3 {
   font-size: 16px;
   font-weight: 600;
   margin: 0 0 12px 0;
 }
 
-.repos-table,
 .items-table {
   border: 1px solid #d0d7de;
   border-radius: 6px;
@@ -253,7 +288,6 @@ code {
   background: white;
 }
 
-.repos-header,
 .items-header {
   display: grid;
   grid-template-columns: 2fr 1fr 2fr 1fr 150px;
@@ -276,13 +310,11 @@ code {
   text-align: right;
 }
 
-.repos-list,
 .items-list {
   display: flex;
   flex-direction: column;
 }
 
-.repo-item,
 .item {
   display: grid;
   grid-template-columns: 2fr 1fr 2fr 1fr 150px;
@@ -294,17 +326,14 @@ code {
   transition: background 0.2s;
 }
 
-.repo-item:last-child,
 .item:last-child {
   border-bottom: none;
 }
 
-.repo-item:hover,
 .item:hover {
   background: #f6f8fa;
 }
 
-.repo-info,
 .item-info {
   display: flex;
   align-items: center;
@@ -312,13 +341,11 @@ code {
   min-width: 0;
 }
 
-.repo-icon,
 .item-icon {
   font-size: 16px;
   flex-shrink: 0;
 }
 
-.repo-name,
 .item-name {
   font-size: 14px;
   color: #0969da;
@@ -328,20 +355,17 @@ code {
   white-space: nowrap;
 }
 
-.repo-size,
 .item-size {
   font-size: 13px;
   color: #57606a;
   text-align: right;
 }
 
-.repo-branch,
 .item-branch {
   font-size: 13px;
   color: #57606a;
 }
 
-.repo-message,
 .item-message {
   font-size: 13px;
   color: #57606a;
@@ -350,7 +374,6 @@ code {
   white-space: nowrap;
 }
 
-.repo-date,
 .item-date {
   font-size: 13px;
   color: #57606a;
