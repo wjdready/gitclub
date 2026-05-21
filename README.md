@@ -32,15 +32,11 @@ Default admin credentials:
 
 ## 🛠️ Configuration
 
-Edit `config.toml` to customize:
+Edit `app.ini` to customize:
 
-```toml
-server_addr = "0.0.0.0"
-server_port = 3000
-data_path = "./data"
-repos_path = "./repos"
-admin_username = "admin"
-admin_password = "admin123"
+```ini
+addr=0.0.0.0
+port=3000
 ```
 
 ## 📖 Usage
