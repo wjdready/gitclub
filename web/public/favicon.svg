@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- Git 分支结构 -->
+  <circle cx="12" cy="18" r="2.2" fill="white" stroke="white" stroke-width="1.5"/>
+  <circle cx="7" cy="8" r="2.2" fill="white" stroke="white" stroke-width="1.5"/>
+  <circle cx="17" cy="8" r="2.2" fill="white" stroke="white" stroke-width="1.5"/>
+  <line x1="7" y1="10.2" x2="12" y2="15.8" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <line x1="17" y1="10.2" x2="12" y2="15.8" stroke="white" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -4,7 +4,11 @@ A lightweight, self-hosted Git server built with Rust and Vue.js. Simple, fast, 
 
 ## ✨ Features
 
-![1779328246358](doc/images/Readme/1779328246358.png)
+![1779329828721](doc/images/Readme/home.png)
+
+Code Tree Visualization
+
+![1779329753237](doc/images/Readme/view.png)
 
 - 🔐 **User Authentication** - Secure login and registration with JWT
 - 📁 **Hierarchical Organization** - Groups and repositories with nested structure
@@ -30,15 +34,25 @@ The server will start at `http://localhost:3000`
 
 Default admin credentials:
 - Username: `admin`
-- Password: `admin123`
+- Password: `admin123456`
 
 ## 🛠️ Configuration
 
 Edit `app.ini` to customize:
 
 ```ini
-addr=0.0.0.0
+[server]
+addr=localhost
 port=3000
+
+[paths]
+data=/your/path/to/data
+log=/your/path/to/log
+repos=/your/path/to/repos
+
+[admin]
+username=admin
+password=admin123456
 ```
 
 ## 📖 Usage

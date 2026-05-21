@@ -116,9 +116,14 @@ async fn main() {
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => {
-            tracing::info!("GitClub server listening on {}", addr);
-            tracing::info!("API available at http://{}/api", addr);
-            tracing::info!("Web UI available at http://{}", addr);
+            let display_addr = if addr.ip().is_unspecified() {
+                format!("localhost:{}", addr.port())
+            } else {
+                addr.to_string()
+            };
+            tracing::info!("GitClub server listening on {}", display_addr);
+            tracing::info!("API available at http://{}/api", display_addr);
+            tracing::info!("Web UI available at http://{}", display_addr);
             listener
         }
         Err(e) => {

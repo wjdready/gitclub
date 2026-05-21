@@ -15,7 +15,19 @@
   <div v-else class="app" :style="{ '--sidebar-width': sidebarWidth + 'px' }">
     <header class="header">
       <div class="header-content">
-        <h1 class="logo">GitClub</h1>
+        <h1 class="logo">
+          <a href="#" class="logo-link" @click.prevent="goHome">
+            <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+              <!-- Git 分支结构 -->
+              <circle cx="12" cy="18" r="2.2" fill="white" stroke="white" stroke-width="1.5"/>
+              <circle cx="7" cy="8" r="2.2" fill="white" stroke="white" stroke-width="1.5"/>
+              <circle cx="17" cy="8" r="2.2" fill="white" stroke="white" stroke-width="1.5"/>
+              <line x1="7" y1="10.2" x2="12" y2="15.8" stroke="white" stroke-width="2" stroke-linecap="round"/>
+              <line x1="17" y1="10.2" x2="12" y2="15.8" stroke="white" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span>GitClub</span>
+          </a>
+        </h1>
         <nav class="nav">
           <a href="#" class="nav-link" :class="{ active: !selectedNode && currentView === 'main' }" @click.prevent="goHome">Contents</a>
         </nav>
@@ -638,6 +650,25 @@ onMounted(async () => {
   font-size: 18px;
   font-weight: 600;
   margin: 0;
+}
+
+.logo-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: white;
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+.logo-link:hover {
+  opacity: 0.8;
+}
+
+.logo-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
 }
 
 .nav {
