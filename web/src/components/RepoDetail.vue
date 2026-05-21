@@ -87,8 +87,31 @@
           </div>
 
           <div class="files-section">
-            <div v-if="detail.files.length === 0" class="empty-files">
-              This repository is empty
+            <div v-if="detail.files.length === 0" class="empty-repo">
+              <div class="empty-icon">📦</div>
+              <h3>create a new repository on the command line</h3>
+              <div class="code-block">
+                <pre><code>echo "# {{ detail.name }}" >> README.md
+git init
+git add README.md
+git commit -m "first commit"
+git branch -M main
+git remote add origin {{ getCloneUrl(detail.path) }}
+git push -u origin main</code></pre>
+                <button class="copy-code-btn" @click="copyCreateRepoCommands">
+                  📋
+                </button>
+              </div>
+
+              <h3>or push an existing repository from the command line</h3>
+              <div class="code-block">
+                <pre><code>git remote add origin {{ getCloneUrl(detail.path) }}
+git branch -M main
+git push -u origin main</code></pre>
+                <button class="copy-code-btn" @click="copyPushCommands">
+                  📋
+                </button>
+              </div>
             </div>
             <div v-else>
               <div class="files-header">
@@ -282,6 +305,24 @@ const copyToClipboard = async (text) => {
   } catch (err) {
     console.error('Failed to copy:', err)
   }
+}
+
+const copyCreateRepoCommands = () => {
+  const commands = `echo "# ${detail.value.name}" >> README.md
+git init
+git add README.md
+git commit -m "first commit"
+git branch -M main
+git remote add origin ${getCloneUrl(detail.value.path)}
+git push -u origin main`
+  copyToClipboard(commands)
+}
+
+const copyPushCommands = () => {
+  const commands = `git remote add origin ${getCloneUrl(detail.value.path)}
+git branch -M main
+git push -u origin main`
+  copyToClipboard(commands)
 }
 
 const handleFileClick = (file) => {
@@ -604,6 +645,93 @@ watch(() => [props.currentPath, props.branch], () => {
   padding: 48px;
   text-align: center;
   color: #57606a;
+}
+
+.empty-repo {
+  padding: 32px 48px;
+  color: #24292f;
+}
+
+.empty-icon {
+  font-size: 48px;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.empty-repo h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 24px 0 12px 0;
+  color: #24292f;
+}
+
+.empty-repo h3:first-of-type {
+  margin-top: 0;
+}
+
+.setup-divider {
+  text-align: center;
+  margin: 24px 0;
+  position: relative;
+}
+
+.setup-divider::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: #d0d7de;
+}
+
+.setup-divider span {
+  position: relative;
+  background: white;
+  padding: 0 16px;
+  color: #57606a;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.code-block {
+  position: relative;
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 16px;
+  max-width: 800px;
+}
+
+.code-block pre {
+  margin: 0;
+  overflow-x: auto;
+}
+
+.code-block code {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #24292f;
+  white-space: pre;
+}
+
+.copy-code-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 6px 12px;
+  background: white;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-size: 14px;
+}
+
+.copy-code-btn:hover {
+  background: #f6f8fa;
 }
 
 .files-list {

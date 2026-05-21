@@ -467,6 +467,9 @@ pub async fn get_repo_detail(
         None
     };
 
+    // 确保仓库在数据库中存在（如果不存在则自动创建并设置 owner）
+    let _ = state.db.ensure_repository_exists(&repo_path).await;
+
     // 获取所有者和成员信息
     let (owner, members) = if let Ok(Some(repo)) = state.db.get_repository_by_path(&repo_path).await {
         let owner_info = if let Some(owner_id) = repo.owner_id {
@@ -935,6 +938,9 @@ pub async fn get_group_detail(
     subgroups.sort_by(|a, b| a.name.cmp(&b.name));
 
     let name = group_path.split('/').last().unwrap_or(&group_path).to_string();
+
+    // 确保组在数据库中存在（如果不存在则自动创建并设置 owner）
+    let _ = state.db.ensure_group_exists(&group_path).await;
 
     // 从 .meta/.meta/group.json 读取描述
     let description = {
@@ -1606,7 +1612,7 @@ pub async fn add_repo_member_handler(
         let group_id = state.db.ensure_group_path(&parent_path, owner.id).await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to ensure parent group: {}", e)}))))?;
 
-        let repo_id = state.db.create_repository(repo_name, &req.path, group_id, None, owner.id).await
+        let _repo_id = state.db.create_repository(repo_name, &req.path, group_id, None, owner.id).await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to create repository record: {}", e)}))))?;
 
         state.db.get_repository_by_path(&req.path).await

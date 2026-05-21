@@ -82,6 +82,7 @@ async fn main() {
 
     let git_state = git_http::GitHttpState {
         scanner: Arc::clone(&scanner),
+        db: Arc::clone(&api_state.db),
     };
 
     let app = Router::new()
@@ -137,6 +138,7 @@ async fn git_or_static_handler(
     let uri = req.uri().clone();
     let path = uri.path();
     let method = req.method().clone();
+    let headers = req.headers().clone();
 
     // Decode URL-encoded path to support non-ASCII characters (e.g., Chinese)
     let decoded_path = urlencoding::decode(path).unwrap_or_else(|_| path.into()).to_string();
@@ -151,14 +153,14 @@ async fn git_or_static_handler(
 
         if let Some(service) = query {
             let repo_path = decoded_path.strip_suffix("/info/refs").unwrap_or(&decoded_path);
-            return git_http::handle_info_refs(repo_path, git_state, service).await;
+            return git_http::handle_info_refs(repo_path, git_state, service, headers).await;
         }
     } else if decoded_path.ends_with("/git-upload-pack") && method == Method::POST {
         let repo_path = decoded_path.strip_suffix("/git-upload-pack").unwrap_or(&decoded_path);
-        return git_http::handle_upload_pack(repo_path, git_state, req.into_body()).await;
+        return git_http::handle_upload_pack(repo_path, git_state, headers, req.into_body()).await;
     } else if decoded_path.ends_with("/git-receive-pack") && method == Method::POST {
         let repo_path = decoded_path.strip_suffix("/git-receive-pack").unwrap_or(&decoded_path);
-        return git_http::handle_receive_pack(repo_path, git_state, req.into_body()).await;
+        return git_http::handle_receive_pack(repo_path, git_state, headers, req.into_body()).await;
     }
 
     // Otherwise serve static files

@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     response::{IntoResponse, Response},
-    http::{StatusCode, header},
+    http::{StatusCode, header, HeaderMap},
 };
 use http_body_util::BodyExt;
 use std::process::Stdio;
@@ -10,24 +10,168 @@ use tokio::process::Command;
 use tokio_util::io::ReaderStream;
 use flate2::read::GzDecoder;
 use crate::scanner::RepoScanner;
+use crate::db::Database;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct GitHttpState {
     pub scanner: Arc<RepoScanner>,
+    pub db: Arc<Database>,
+}
+
+fn extract_basic_auth(headers: &HeaderMap) -> Option<(String, String)> {
+    let auth_header = headers.get(header::AUTHORIZATION)?;
+    let auth_str = auth_header.to_str().ok()?;
+
+    if !auth_str.starts_with("Basic ") {
+        return None;
+    }
+
+    let encoded = auth_str.strip_prefix("Basic ")?;
+    let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded).ok()?;
+    let decoded_str = String::from_utf8(decoded).ok()?;
+
+    let mut parts = decoded_str.splitn(2, ':');
+    let username = parts.next()?.to_string();
+    let password = parts.next()?.to_string();
+
+    Some((username, password))
+}
+
+async fn authenticate_user(db: &Database, username: &str, password: &str) -> Option<i64> {
+    let user = db.get_user_by_username(username).await.ok()??;
+
+    if crate::auth::verify_password(password, &user.password_hash).ok()? {
+        Some(user.id)
+    } else {
+        None
+    }
+}
+
+async fn check_repo_permission(db: &Database, user_id: i64, repo_path: &str, need_write: bool) -> bool {
+    // 管理员有所有权限
+    let user = match db.get_user_by_id(user_id).await {
+        Ok(Some(user)) => {
+            if user.is_admin {
+                return true;
+            }
+            user
+        }
+        _ => return false,
+    };
+
+    // 检查是否是仓库所有者
+    if let Ok(Some(repo)) = db.get_repository_by_path(repo_path).await {
+        if repo.owner_id == Some(user_id) {
+            return true;
+        }
+
+        // 检查是否是仓库成员
+        if let Ok(members) = db.list_repository_members(repo.id).await {
+            if let Some(member) = members.iter().find(|m| m.user_id == user_id) {
+                // 读权限：任何成员都可以
+                if !need_write {
+                    return true;
+                }
+                // 写权限：需要 admin 或 member 角色（不包括 reader）
+                return member.role == "admin" || member.role == "member";
+            }
+        }
+
+        // 检查是否通过组成员关系有权限
+        if let Ok(Some(group)) = db.get_group_by_id(repo.group_id).await {
+            // 检查是否是组成员
+            if let Ok(members) = db.list_group_members(group.id).await {
+                if let Some(member) = members.iter().find(|m| m.user_id == user_id) {
+                    // 读权限：任何组成员都可以访问组内的仓库
+                    if !need_write {
+                        return true;
+                    }
+                    // 写权限：需要 admin 或 member 角色
+                    return member.role == "admin" || member.role == "member";
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // 仓库不存在的情况（push-on-create）
+    // 只有在需要写权限时才检查创建权限
+    if !need_write {
+        return false;
+    }
+
+    // 解析路径：username/... 或 username/group/.../repo
+    let path_parts: Vec<&str> = repo_path.trim_start_matches('/').split('/').collect();
+    if path_parts.is_empty() {
+        return false;
+    }
+
+    let path_owner = path_parts[0];
+
+    // 检查路径是否以当前用户名开头
+    if path_owner == user.username {
+        return true;
+    }
+
+    // 检查路径是否以用户所属的组开头
+    // 路径格式可能是: username/groupname/repo 或 username/groupname/subgroup/repo
+    if path_parts.len() >= 2 {
+        let potential_group_path = format!("{}/{}", path_parts[0], path_parts[1]);
+
+        // 尝试通过路径查找组
+        if let Ok(Some(group)) = db.get_group_by_path(&potential_group_path).await {
+            // 检查用户是否是该组的成员且有写权限
+            if let Ok(members) = db.list_group_members(group.id).await {
+                if let Some(member) = members.iter().find(|m| m.user_id == user_id) {
+                    return member.role == "admin" || member.role == "member";
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn unauthorized_response() -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header(header::WWW_AUTHENTICATE, "Basic realm=\"GitClub\"")
+        .body(Body::from("Authentication required"))
+        .unwrap()
 }
 
 pub async fn handle_info_refs(
     repo_path: &str,
     state: GitHttpState,
     service: &str,
+    headers: HeaderMap,
 ) -> Response {
     let repo_path = repo_path.trim_start_matches('/');
-    let full_path = state.scanner.repos_path().join(repo_path);
 
     if service != "git-upload-pack" && service != "git-receive-pack" {
         return (StatusCode::BAD_REQUEST, "Invalid service").into_response();
     }
+
+    // 身份验证
+    let (username, password) = match extract_basic_auth(&headers) {
+        Some(creds) => creds,
+        None => return unauthorized_response(),
+    };
+
+    let user_id = match authenticate_user(&state.db, &username, &password).await {
+        Some(id) => id,
+        None => return unauthorized_response(),
+    };
+
+    // 权限检查
+    let need_write = service == "git-receive-pack";
+    if !check_repo_permission(&state.db, user_id, repo_path, need_write).await {
+        return (StatusCode::FORBIDDEN, "Access denied").into_response();
+    }
+
+    let full_path = state.scanner.repos_path().join(repo_path);
 
     // 如果是 git-receive-pack (push) 且仓库不存在，则自动创建
     if !full_path.exists() {
@@ -106,26 +250,47 @@ pub async fn handle_info_refs(
 pub async fn handle_upload_pack(
     repo_path: &str,
     state: GitHttpState,
+    headers: HeaderMap,
     body: Body,
 ) -> Response {
-    handle_git_rpc(repo_path, state, body, "upload-pack").await
+    handle_git_rpc(repo_path, state, headers, body, "upload-pack").await
 }
 
 pub async fn handle_receive_pack(
     repo_path: &str,
     state: GitHttpState,
+    headers: HeaderMap,
     body: Body,
 ) -> Response {
-    handle_git_rpc(repo_path, state, body, "receive-pack").await
+    handle_git_rpc(repo_path, state, headers, body, "receive-pack").await
 }
 
 async fn handle_git_rpc(
     repo_path: &str,
     state: GitHttpState,
+    headers: HeaderMap,
     body: Body,
     service: &str,
 ) -> Response {
     let repo_path = repo_path.trim_start_matches('/');
+
+    // 身份验证
+    let (username, password) = match extract_basic_auth(&headers) {
+        Some(creds) => creds,
+        None => return unauthorized_response(),
+    };
+
+    let user_id = match authenticate_user(&state.db, &username, &password).await {
+        Some(id) => id,
+        None => return unauthorized_response(),
+    };
+
+    // 权限检查
+    let need_write = service == "receive-pack";
+    if !check_repo_permission(&state.db, user_id, repo_path, need_write).await {
+        return (StatusCode::FORBIDDEN, "Access denied").into_response();
+    }
+
     let full_path = state.scanner.repos_path().join(repo_path);
 
     // 如果是 receive-pack (push) 且仓库不存在，则自动创建

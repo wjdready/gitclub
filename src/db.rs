@@ -518,4 +518,66 @@ impl Database {
 
         Ok(false)
     }
+
+    /// 根据路径推断所有者用户 ID（路径的第一部分是用户名）
+    pub async fn infer_owner_from_path(&self, path: &str) -> Option<i64> {
+        let username = path.split('/').next()?;
+        let user = self.get_user_by_username(username).await.ok()??;
+        Some(user.id)
+    }
+
+    /// 确保组在数据库中存在，如果不存在则自动创建并设置 owner
+    pub async fn ensure_group_exists(&self, path: &str) -> Result<Group, sqlx::Error> {
+        // 先尝试获取
+        if let Some(group) = self.get_group_by_path(path).await? {
+            return Ok(group);
+        }
+
+        // 不存在，根据路径推断所有者并创建
+        let owner_id = self.infer_owner_from_path(path).await.unwrap_or(1); // 默认使用 admin (id=1)
+
+        let group_name = path.split('/').last().unwrap_or(path);
+        let parent_path = if path.contains('/') {
+            let parts: Vec<&str> = path.split('/').collect();
+            Some(parts[..parts.len()-1].join("/"))
+        } else {
+            None
+        };
+
+        let parent_id = if let Some(ref parent) = parent_path {
+            self.ensure_group_path(parent, owner_id).await.ok()
+        } else {
+            None
+        };
+
+        let group_id = self.create_group(group_name, path, parent_id, None, owner_id).await?;
+        self.get_group_by_id(group_id).await?
+            .ok_or_else(|| sqlx::Error::RowNotFound)
+    }
+
+    /// 确保仓库在数据库中存在，如果不存在则自动创建并设置 owner
+    pub async fn ensure_repository_exists(&self, path: &str) -> Result<Repository, sqlx::Error> {
+        // 先尝试获取
+        if let Some(repo) = self.get_repository_by_path(path).await? {
+            return Ok(repo);
+        }
+
+        // 不存在，根据路径推断所有者并创建
+        let owner_id = self.infer_owner_from_path(path).await.unwrap_or(1); // 默认使用 admin (id=1)
+
+        let repo_name = path.split('/').last().unwrap_or(path);
+        let parent_path = if path.contains('/') {
+            let parts: Vec<&str> = path.split('/').collect();
+            parts[..parts.len()-1].join("/")
+        } else {
+            // 仓库在根目录，使用用户名作为父路径
+            path.split('/').next().unwrap_or("admin").to_string()
+        };
+
+        let group_id = self.ensure_group_path(&parent_path, owner_id).await?;
+        let repo_id = self.create_repository(repo_name, path, group_id, None, owner_id).await?;
+
+        self.get_repository_by_path(path).await?
+            .ok_or_else(|| sqlx::Error::RowNotFound)
+    }
 }

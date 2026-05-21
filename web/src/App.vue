@@ -17,8 +17,7 @@
       <div class="header-content">
         <h1 class="logo">GitClub</h1>
         <nav class="nav">
-          <a href="#" class="nav-link" :class="{ active: !selectedNode && currentView === 'main' }" @click.prevent="goHome">Repositories</a>
-          <a href="#" class="nav-link" :class="{ active: !selectedNode && currentView === 'main' }" @click.prevent="goHome">Groups</a>
+          <a href="#" class="nav-link" :class="{ active: !selectedNode && currentView === 'main' }" @click.prevent="goHome">Contents</a>
         </nav>
         <div class="user-menu">
           <button class="btn-profile" @click="showProfile">
@@ -46,7 +45,7 @@
       <aside class="sidebar" v-if="currentView === 'main'">
         <div v-if="viewMode === 'tree'" class="tree-view-container">
           <div class="sidebar-header">
-            <h2>Groups & Repositories</h2>
+            <h2>Contents</h2>
             <button class="btn-new" @click="showCreateModal = true">New</button>
           </div>
           <div class="tree-container">
