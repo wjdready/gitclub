@@ -98,6 +98,11 @@
           :user="currentUser"
           @profile-updated="handleProfileUpdated"
         />
+        <TagsView
+          v-else-if="showTagsView && selectedNode && selectedNode.is_repo"
+          :repo-path="selectedNode.path"
+          @tag-selected="handleTagSelected"
+        />
         <FileViewer
           v-else-if="selectedFile && selectedNode && selectedNode.is_repo"
           :repo-path="selectedNode.path"
@@ -112,6 +117,7 @@
           :branch="currentBranch"
           @navigate="handleNavigate"
           @file-selected="handleFileSelected"
+          @view-tags="handleViewTags"
         />
 
         <GroupDetail
@@ -152,6 +158,7 @@ import FileViewer from './components/FileViewer.vue'
 import Login from './components/Login.vue'
 import Register from './components/Register.vue'
 import UserProfile from './components/UserProfile.vue'
+import TagsView from './components/TagsView.vue'
 
 // 认证状态
 const isAuthenticated = ref(false)
@@ -170,6 +177,7 @@ const currentBranch = ref('')
 const expandedPaths = ref(new Set())
 const expandedFilePaths = ref(new Set())
 const selectedFile = ref(null)
+const showTagsView = ref(false)
 const sidebarWidth = ref(320)
 const MIN_SIDEBAR = 200
 const MAX_SIDEBAR = 600
@@ -291,10 +299,26 @@ const handleFileSelected = (file) => {
   }
   const filePath = typeof file === 'string' ? file : file.path
   selectedFile.value = filePath
+  showTagsView.value = false
   // 更新面包屑上下文为文件所在的目录
   const lastSlash = filePath.lastIndexOf('/')
   currentFilePath.value = lastSlash >= 0 ? filePath.substring(0, lastSlash) : ''
   scrollSelectedIntoView()
+}
+
+const handleViewTags = () => {
+  showTagsView.value = true
+  selectedFile.value = null
+  viewMode.value = 'tree'
+}
+
+const handleTagSelected = (tag) => {
+  // 当点击某个 tag 时，可以导航到该 tag 的文件列表
+  // 这里可以扩展为切换到该 tag 的分支视图
+  console.log('Tag selected:', tag)
+  currentBranch.value = tag.name
+  showTagsView.value = false
+  enterFileBrowser(selectedNode.value.path, tag.name)
 }
 
 const handleSelectRepo = (path) => {
@@ -333,6 +357,7 @@ const goHome = () => {
   currentFilePath.value = ''
   currentBranch.value = ''
   selectedFile.value = null
+  showTagsView.value = false
   expandedPaths.value = new Set()
   expandedFilePaths.value = new Set()
 }
@@ -342,6 +367,7 @@ const showProfile = () => {
   selectedNode.value = null
   selectedPath.value = ''
   viewMode.value = 'tree'
+  showTagsView.value = false
 }
 
 const handleProfileUpdated = (updatedUser) => {
@@ -432,7 +458,9 @@ const handleBreadcrumbClick = (crumb, index) => {
 function syncUrl() {
   let path = ''
   const cleanRepoPath = selectedNode.value?.path?.replace(/\.git$/, '') || ''
-  if (viewMode.value === 'file-browser' && selectedNode.value?.is_repo) {
+  if (showTagsView.value && selectedNode.value?.is_repo) {
+    path = `/${cleanRepoPath}/tags`
+  } else if (viewMode.value === 'file-browser' && selectedNode.value?.is_repo) {
     if (selectedFile.value) {
       path = `/${cleanRepoPath}/blob/${currentBranch.value || 'HEAD'}/${selectedFile.value}`
     } else if (currentFilePath.value) {
@@ -495,9 +523,18 @@ function resolveRoute() {
       const remaining = segments.slice(i)
 
       if (remaining.length >= 1) {
+        const action = remaining[0] // blob, tree, 或 tags
+
+        if (action === 'tags') {
+          // 显示 tags 视图
+          showTagsView.value = true
+          selectedFile.value = null
+          viewMode.value = 'tree'
+          return
+        }
+
         // 有子路径（/tree/... 或 /blob/...），进入文件浏览模式
         enterFileBrowser(repo.path, '')
-        const action = remaining[0] // blob 或 tree
         const branch = remaining[1] || ''
         const filePath = remaining.slice(2).join('/')
         currentBranch.value = branch === 'HEAD' ? '' : branch
@@ -591,7 +628,7 @@ const handleLogout = async () => {
 }
 
 watch(
-  [viewMode, selectedFile, currentFilePath, currentBranch, selectedNode],
+  [viewMode, selectedFile, currentFilePath, currentBranch, selectedNode, showTagsView],
   () => nextTick(syncUrl),
   { immediate: true }
 )

@@ -398,6 +398,7 @@ pub struct RepoDetail {
     pub path: String,
     pub default_branch: Option<String>,
     pub branches: Vec<String>,
+    pub tags: Vec<TagInfo>,
     pub files: Vec<RepoFile>,
     pub readme_content: Option<String>,
     pub description: Option<String>,
@@ -447,6 +448,7 @@ pub async fn get_repo_detail(
 
     let default_branch = get_default_branch(&full_path);
     let branches = get_branches(&full_path);
+    let tags = get_tags(&full_path);
 
     let branch = query.branch.or(default_branch.clone());
     let file_path = query.path.as_deref().unwrap_or("");
@@ -506,6 +508,7 @@ pub async fn get_repo_detail(
         path: repo_path,
         default_branch: branch,
         branches,
+        tags,
         files,
         readme_content,
         description: None,
@@ -564,6 +567,64 @@ fn get_branches(repo_path: &std::path::Path) -> Vec<String> {
             String::from_utf8_lossy(&output.stdout)
                 .lines()
                 .map(|line| line.trim().trim_start_matches("* ").to_string())
+                .collect()
+        }
+        _ => Vec::new()
+    }
+}
+
+#[derive(Serialize)]
+pub struct TagInfo {
+    pub name: String,
+    pub commit: String,
+    pub message: Option<String>,
+    pub tagger: Option<String>,
+    pub date: Option<String>,
+}
+
+fn get_tags(repo_path: &std::path::Path) -> Vec<TagInfo> {
+    let output = Command::new("git")
+        .args(&["tag", "-l"])
+        .current_dir(repo_path)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| !line.is_empty())
+                .filter_map(|tag_name| {
+                    // 获取 tag 的详细信息
+                    let show_output = Command::new("git")
+                        .args(&["show", "-s", "--format=%H|%an|%ar|%s", tag_name])
+                        .current_dir(repo_path)
+                        .output()
+                        .ok()?;
+
+                    if show_output.status.success() {
+                        let info = String::from_utf8_lossy(&show_output.stdout);
+                        let parts: Vec<&str> = info.trim().split('|').collect();
+                        if parts.len() >= 4 {
+                            Some(TagInfo {
+                                name: tag_name.to_string(),
+                                commit: parts[0].to_string(),
+                                tagger: Some(parts[1].to_string()),
+                                date: Some(parts[2].to_string()),
+                                message: Some(parts[3].to_string()),
+                            })
+                        } else {
+                            Some(TagInfo {
+                                name: tag_name.to_string(),
+                                commit: parts.get(0).unwrap_or(&"").to_string(),
+                                tagger: None,
+                                date: None,
+                                message: None,
+                            })
+                        }
+                    } else {
+                        None
+                    }
+                })
                 .collect()
         }
         _ => Vec::new()

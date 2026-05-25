@@ -181,6 +181,15 @@ git push -u origin main</code></pre>
           </div>
 
           <div class="info-section">
+            <h3>Tags</h3>
+            <div v-if="detail.tags && detail.tags.length > 0" class="tags-summary">
+              <div class="tags-count">{{ detail.tags.length }} {{ detail.tags.length === 1 ? 'tag' : 'tags' }}</div>
+              <a href="#" class="view-all-link" @click.prevent="viewAllTags">View all tags</a>
+            </div>
+            <p v-else class="empty-text">No tags</p>
+          </div>
+
+          <div class="info-section">
             <h3>Releases</h3>
             <p class="empty-text">No releases published</p>
             <a href="#" class="create-link">Create a new release</a>
@@ -226,7 +235,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['navigate', 'file-selected'])
+const emit = defineEmits(['navigate', 'file-selected', 'view-tags'])
 
 const detail = ref(null)
 const loading = ref(false)
@@ -339,6 +348,10 @@ const formatSize = (bytes) => {
   const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+}
+
+const viewAllTags = () => {
+  emit('view-tags')
 }
 
 watch(() => props.repoPath, () => {
@@ -920,6 +933,28 @@ watch(() => [props.currentPath, props.branch], () => {
 
 .language-percent {
   color: #57606a;
+}
+
+.tags-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tags-count {
+  font-size: 14px;
+  color: #24292f;
+  font-weight: 500;
+}
+
+.view-all-link {
+  font-size: 12px;
+  color: #0969da;
+  text-decoration: none;
+}
+
+.view-all-link:hover {
+  text-decoration: underline;
 }
 
 .markdown-body {
